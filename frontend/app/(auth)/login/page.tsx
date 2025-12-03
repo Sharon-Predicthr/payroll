@@ -28,34 +28,51 @@ export default function LoginPage() {
     setError("");
 
     try {
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_BASE_URL}/auth/login`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(data),
-        }
-      );
-
-      const json = await res.json();
+      // Call backend directly - CORS is enabled
+      // Remove /api if present in the base URL since backend doesn't use /api prefix
+      let backendUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:4000";
+      backendUrl = backendUrl.replace(/\/api\/?$/, "").replace(/\/$/, "");
+      const url = `${backendUrl}/auth/login`;
+      
+      console.log("Calling backend at:", url);
+      
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
 
       if (!res.ok) {
-        throw new Error(json.message ?? "Login failed");
+        const errorText = await res.text();
+        let errorJson;
+        try {
+          errorJson = JSON.parse(errorText);
+        } catch {
+          throw new Error(errorText || `HTTP ${res.status}: ${res.statusText}`);
+        }
+        throw new Error(errorJson.message ?? "Login failed");
       }
+
+      const json = await res.json();
 
       // save token
       localStorage.setItem("token", json.access_token);
       localStorage.setItem("tenantCode", json.tenant.code);
 
-      // redirect
-      router.push("/(dashboard)");
+      // redirect to payroll dashboard
+      router.push("/payroll");
     } catch (err: any) {
-      setError(err.message || "Login failed");
+      // Better error handling for network issues
+      if (err.message === "Failed to fetch" || err.name === "TypeError") {
+        setError("Cannot connect to server. Please check if the backend is running on http://localhost:4000");
+      } else {
+        setError(err.message || "Login failed");
+      }
     }
   };
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center bg-gray-100 p-6">
+    <div className="min-h-screen w-full flex items-center justify-center bg-gray-100 p-6" dir="rtl">
       <Card className="w-full max-w-sm shadow-lg">
         <CardHeader>
           <CardTitle className="text-center text-2xl font-bold">

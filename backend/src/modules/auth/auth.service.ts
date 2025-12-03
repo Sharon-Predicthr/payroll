@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, InternalServerErrorException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as sql from 'mssql';
 import { AuditService } from './audit.service';
@@ -10,20 +10,69 @@ export class AuthService {
   constructor(
     private jwt: JwtService,
     private audit: AuditService,
-  ) {
-    this.controlPool = new sql.ConnectionPool({
-      connectionString: process.env.CONTROL_DB_URL,
-      options: { trustServerCertificate: true },
-    });
+  ) {}
 
-    this.controlPool.connect();
+  private parseConnectionString(connectionString: string): any {
+    const config: any = { options: { trustServerCertificate: true } };
+    const parts = connectionString.split(';');
+    
+    for (const part of parts) {
+      const [key, value] = part.split('=').map(s => s.trim());
+      if (!key || !value) continue;
+      
+      switch (key.toLowerCase()) {
+        case 'server':
+          config.server = value;
+          break;
+        case 'database':
+          config.database = value;
+          break;
+        case 'user id':
+        case 'userid':
+          config.user = value;
+          break;
+        case 'password':
+          config.password = value;
+          break;
+        case 'port':
+          config.port = parseInt(value);
+          break;
+      }
+    }
+    
+    return config;
+  }
+
+  private async getConnectionPool(): Promise<sql.ConnectionPool> {
+    if (!process.env.CONTROL_DB_URL) {
+      throw new InternalServerErrorException('Database not configured. Please set CONTROL_DB_URL environment variable.');
+    }
+
+    // Check if pool exists and is connected
+    if (this.controlPool && this.controlPool.connected) {
+      return this.controlPool;
+    }
+
+    // Parse connection string and create pool
+    const config = this.parseConnectionString(process.env.CONTROL_DB_URL);
+    this.controlPool = new sql.ConnectionPool(config);
+
+    try {
+      await this.controlPool.connect();
+      return this.controlPool;
+    } catch (error) {
+      this.controlPool = null;
+      throw new InternalServerErrorException(`Failed to connect to database: ${error.message}`);
+    }
   }
 
   async login(data: { email: string; password: string }, meta: any) {
+    const pool = await this.getConnectionPool();
+
     const { email, password } = data;
 
     // 1. מציאת משתמש
-    const userResult = await this.controlPool
+    const userResult = await pool
       .request()
       .input('email', sql.NVarChar, email)
       .query(
@@ -45,7 +94,7 @@ export class AuthService {
     }
 
     // 3. מציאת ה-Tenants של המשתמש
-    const tenantResult = await this.controlPool
+    const tenantResult = await pool
       .request()
       .input('userId', sql.UniqueIdentifier, user.id)
       .query(
