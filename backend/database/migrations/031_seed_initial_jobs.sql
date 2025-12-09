@@ -1,0 +1,62 @@
+-- Migration: Seed initial scheduled jobs
+-- This script creates example jobs that can be used for testing
+-- Run this after creating the job scheduler tables
+
+-- Example: Payroll Due Reminder (runs every 60 minutes for each tenant)
+-- Note: Replace @TENANT_ID_1, @TENANT_ID_2 with actual tenant IDs from your tenants table
+
+-- Example for tenant ACME (replace with actual tenant ID)
+-- INSERT INTO scheduled_jobs (tenant_id, name, job_type, interval_minutes, next_run_at, is_active, payload_json)
+-- SELECT 
+--     id as tenant_id,
+--     'Payroll Due Reminder - ' + name as name,
+--     'PAYROLL_DUE_REMINDER' as job_type,
+--     60 as interval_minutes,
+--     DATEADD(minute, 60, SYSUTCDATETIME()) as next_run_at,
+--     1 as is_active,
+--     '{"daysBeforeDue": 3}' as payload_json
+-- FROM tenants
+-- WHERE is_active = 1;
+
+-- Example: Document Expiry Check (runs daily for each tenant)
+-- INSERT INTO scheduled_jobs (tenant_id, name, job_type, interval_minutes, next_run_at, is_active, payload_json)
+-- SELECT 
+--     id as tenant_id,
+--     'Document Expiry Check - ' + name as name,
+--     'DOCUMENT_EXPIRY_CHECK' as job_type,
+--     1440 as interval_minutes, -- 24 hours
+--     DATEADD(minute, 1440, SYSUTCDATETIME()) as next_run_at,
+--     1 as is_active,
+--     '{"daysBeforeExpiry": 30}' as payload_json
+-- FROM tenants
+-- WHERE is_active = 1;
+
+-- Example: Integration Status Check (global job, runs every 30 minutes)
+-- INSERT INTO scheduled_jobs (tenant_id, name, job_type, interval_minutes, next_run_at, is_active, payload_json)
+-- VALUES (
+--     NULL, -- Global job
+--     'Integration Status Check',
+--     'INTEGRATION_STATUS_CHECK',
+--     30,
+--     DATEADD(minute, 30, SYSUTCDATETIME()),
+--     1,
+--     '{}'
+-- );
+
+-- To manually create jobs for a specific tenant, use:
+-- DECLARE @TenantId UNIQUEIDENTIFIER = (SELECT id FROM tenants WHERE code = 'ACME' AND is_active = 1);
+-- 
+-- IF @TenantId IS NOT NULL
+-- BEGIN
+--     INSERT INTO scheduled_jobs (tenant_id, name, job_type, interval_minutes, next_run_at, is_active, payload_json)
+--     VALUES (
+--         @TenantId,
+--         'Payroll Due Reminder',
+--         'PAYROLL_DUE_REMINDER',
+--         60,
+--         DATEADD(minute, 60, SYSUTCDATETIME()),
+--         1,
+--         '{"daysBeforeDue": 3}'
+--     );
+-- END;
+

@@ -2,7 +2,60 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  background: #f5f5f5;
-  font-family: sans-serif;
+@layer base {
+  * {
+    @apply border-gray-200;
+  }
+  
+  html {
+    font-family: var(--font-inter), var(--font-hebrew), var(--font-arabic), system-ui, -apple-system, sans-serif;
+  }
+  
+  body {
+    @apply bg-bg-main text-text-main;
+    font-size: 14px;
+    line-height: 1.5;
+    font-family: inherit;
+  }
+  
+  /* Hebrew and Arabic font support - prioritize RTL fonts for RTL content */
+  html[dir="rtl"],
+  html[dir="rtl"] *,
+  [dir="rtl"],
+  [dir="rtl"] * {
+    font-family: var(--font-hebrew), var(--font-arabic), var(--font-inter), system-ui, -apple-system, sans-serif;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    @apply text-text-main font-semibold;
+  }
+  
+  p {
+    @apply text-text-main;
+  }
+}
+
+@layer components {
+  /* Card Styles */
+  .card {
+    @apply bg-card-bg rounded-xl border border-gray-200 shadow-sm;
+  }
+  
+  /* Button Variants */
+  .btn-primary {
+    @apply bg-primary hover:bg-primary/90 text-white font-medium rounded-md px-4 py-2 transition-colors;
+  }
+  
+  .btn-secondary {
+    @apply bg-secondary hover:bg-secondary/90 text-white font-medium rounded-md px-4 py-2 transition-colors;
+  }
+  
+  .btn-outline {
+    @apply bg-white border border-gray-300 text-text-main hover:bg-gray-50 font-medium rounded-md px-4 py-2 transition-colors;
+  }
+  
+  /* Input Styles */
+  .input-base {
+    @apply rounded-md border-gray-300 focus:ring-2 focus:ring-primary focus:border-primary;
+  }
 }

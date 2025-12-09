@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
+import { PassportModule } from '@nestjs/passport';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
@@ -8,9 +9,16 @@ import { AuditService } from './audit.service';
 
 @Module({
   imports: [
-    JwtModule.register({
-      secret: process.env.JWT_SECRET || 'dev-secret-key-change-in-production',
-      signOptions: { expiresIn: '1d' },
+    PassportModule, // Required for AuthGuard('jwt') to work
+    JwtModule.registerAsync({
+      useFactory: () => {
+        const secret = process.env.JWT_SECRET || 'dev-secret-key-change-in-production';
+        console.log(`[AuthModule] JwtModule registering with secret: ${secret.substring(0, 10)}... (${secret.length} chars)`);
+        return {
+          secret: secret,
+          signOptions: { expiresIn: '1d' },
+        };
+      },
     }),
   ],
   controllers: [AuthController],
@@ -20,6 +28,6 @@ import { AuditService } from './audit.service';
     TenantResolverService,
     AuditService,
   ],
-  exports: [TenantResolverService],
+  exports: [TenantResolverService, PassportModule], // Export PassportModule so other modules can use AuthGuard
 })
 export class AuthModule {}

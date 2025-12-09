@@ -111,21 +111,59 @@ export class AuthService {
 
     const tenant = tenantResult.recordset[0];
 
+    // 4. Verify tenant database connection details exist
+    if (!tenant.db_host || !tenant.db_name || !tenant.db_user || !tenant.db_password_enc) {
+      await this.audit.logAttempt(email, false, 'Tenant database not configured', meta);
+      throw new InternalServerErrorException('Tenant database connection not configured');
+    }
+
     await this.audit.logAttempt(email, true, 'Login OK', meta);
 
-    // 4. יצירת JWT
+    // 5. יצירת JWT עם tenant code
+    const secret = process.env.JWT_SECRET || 'dev-secret-key-change-in-production';
+    console.log(`[AuthService] Signing token with secret: ${secret.substring(0, 10)}... (${secret.length} chars)`);
+    
     const token = this.jwt.sign({
       sub: user.id,
       email: user.email,
       tenantCode: tenant.code,
       role: tenant.role,
     });
+    
+    console.log(`[AuthService] Token created successfully (first 20 chars): ${token.substring(0, 20)}...`);
 
-    return {
+    const response: any = {
       access_token: token,
       user: { id: user.id, email: user.email },
-      tenant: { code: tenant.code, name: tenant.name },
+      tenant: { 
+        code: tenant.code, 
+        name: tenant.name,
+      },
     };
+
+    // Add DB connection info if indicator is enabled (for testing)
+    if (process.env.ENABLE_DB_INDICATOR === 'true') {
+      response._dbInfo = {
+        tenantCode: tenant.code,
+        tenantName: tenant.name,
+        dbHost: tenant.db_host,
+        dbName: tenant.db_name,
+        dbPort: tenant.db_port,
+        dbUser: tenant.db_user,
+        // Don't expose password
+        controlDb: 'PayrollControlDB',
+      };
+    }
+
+    return response;
+  }
+
+  /**
+   * Logout - logs the logout action for audit purposes
+   */
+  async logout(email: string, meta: any) {
+    await this.audit.logAttempt(email, true, 'Logout', meta);
+    return { success: true, message: 'Logged out successfully' };
   }
 }
 

@@ -1,0 +1,271 @@
+{
+  "common": {
+    "loading": "جاري التحميل...",
+    "error": "خطأ",
+    "success": "نجاح",
+    "save": "حفظ",
+    "cancel": "إلغاء",
+    "delete": "حذف",
+    "edit": "تعديل",
+    "add": "إضافة",
+    "search": "بحث",
+    "filter": "تصفية",
+    "clear": "مسح",
+    "export": "تصدير",
+    "import": "استيراد",
+    "close": "إغلاق",
+    "confirm": "تأكيد",
+    "yes": "نعم",
+    "no": "لا",
+    "back": "رجوع",
+    "next": "التالي",
+    "previous": "السابق",
+    "submit": "إرسال",
+    "reset": "إعادة تعيين",
+    "actions": "الإجراءات",
+    "status": "الحالة",
+    "active": "نشط",
+    "inactive": "غير نشط",
+    "all": "الكل",
+    "settings": "الإعدادات",
+    "notifications": "الإشعارات",
+    "markAllRead": "وضع علامة مقروءة على الكل",
+    "noNotifications": "لا توجد إشعارات",
+    "viewAll": "عرض الكل"
+  },
+  "auth": {
+    "login": {
+      "title": "تسجيل الدخول إلى PayLens",
+      "email": "البريد الإلكتروني",
+      "password": "كلمة المرور",
+      "rememberMe": "تذكرني",
+      "forgotPassword": "نسيت كلمة المرور؟",
+      "signIn": "تسجيل الدخول",
+      "signingIn": "جاري تسجيل الدخول...",
+      "error": "البريد الإلكتروني أو كلمة المرور غير صحيحة",
+      "emailRequired": "يرجى إدخال بريدك الإلكتروني",
+      "passwordRequired": "يرجى إدخال كلمة المرور",
+      "invalidEmail": "يرجى إدخال عنوان بريد إلكتروني صحيح"
+    },
+    "logout": "تسجيل الخروج"
+  },
+  "navigation": {
+    "dashboard": "لوحة التحكم",
+    "payroll": "كشوف المرتبات",
+    "employees": "الموظفون",
+    "reports": "التقارير",
+    "settings": "الإعدادات",
+    "integrations": "التكاملات",
+    "timeTracking": "تتبع الوقت",
+    "notifications": "الإشعارات"
+  },
+  "employees": {
+    "title": "الموظفون",
+    "breadcrumb": {
+      "home": "الرئيسية"
+    },
+    "addEmployee": "إضافة موظف",
+    "searchPlaceholder": "بحث عن الموظفين...",
+    "noEmployees": "لا يوجد موظفون",
+    "noEmployeesFound": "لم يتم العثور على موظفين",
+    "noEmployeesDescription": "ابدأ بإضافة أول موظف لك.",
+    "noResultsDescription": "حاول تعديل المرشحات لرؤية المزيد من النتائج.",
+    "clearFilters": "مسح المرشحات",
+    "selectEmployee": "حدد موظفاً لعرض التفاصيل",
+    "employeeDetails": "تفاصيل الموظف",
+    "name": "الاسم",
+    "id": "المعرف",
+    "email": "البريد الإلكتروني",
+    "phone": "الهاتف",
+    "department": "القسم",
+    "position": "المنصب",
+    "status": "الحالة",
+    "employmentType": "نوع التوظيف",
+    "country": "الدولة",
+    "hireDate": "تاريخ التوظيف",
+    "terminationDate": "تاريخ إنهاء الخدمة",
+    "terminate": "إنهاء الخدمة",
+    "terminateConfirm": "هل أنت متأكد أنك تريد إنهاء خدمة هذا الموظف؟ لا يمكن التراجع عن هذا الإجراء.",
+    "terminatedSuccess": "تم إنهاء خدمة الموظف بنجاح",
+    "savedSuccess": "تم حفظ معلومات الموظف بنجاح",
+    "tabs": {
+      "overview": "نظرة عامة",
+      "personal": "شخصي",
+      "employment": "التوظيف",
+      "payroll": "كشوف المرتبات",
+      "timeAttendance": "الوقت والحضور",
+      "benefits": "المزايا",
+      "documents": "المستندات والسجل"
+    },
+    "filters": {
+      "allDepartments": "جميع الأقسام",
+      "allStatus": "جميع الحالات",
+      "allCountries": "جميع البلدان",
+      "allTypes": "جميع الأنواع"
+    },
+    "pagination": {
+      "showing": "عرض",
+      "to": "إلى",
+      "of": "من",
+      "employees": "موظف",
+      "page": "صفحة",
+      "items": "عناصر"
+    },
+    "emptyStates": {
+      "noData": "لا توجد بيانات متاحة",
+      "noPayItems": "لم يتم العثور على عناصر الدفع",
+      "noBankDetails": "لم يتم العثور على تفاصيل البنك",
+      "noTaxProfile": "لم يتم العثور على ملف ضريبي",
+      "noPensionProfile": "لم يتم العثور على ملف معاش",
+      "noAttendance": "لم يتم العثور على سجلات الحضور",
+      "noLeaveBalances": "لم يتم العثور على أرصدة الإجازة",
+      "noContracts": "لم يتم العثور على عقود"
+    },
+    "status": {
+      "active": "نشط",
+      "inactive": "غير نشط",
+      "onLeave": "في إجازة"
+    },
+    "employmentTypes": {
+      "fullTime": "دوام كامل",
+      "partTime": "دوام جزئي",
+      "contract": "عقد"
+    },
+    "actions": {
+      "payslip": "كشف الراتب",
+      "terminate": "إنهاء الخدمة",
+      "ai": "AI",
+      "retry": "إعادة المحاولة"
+    },
+    "fields": {
+      "employeeId": "معرف الموظف",
+      "firstName": "الاسم الأول",
+      "lastName": "اسم العائلة",
+      "dateOfBirth": "تاريخ الميلاد",
+      "address": "العنوان",
+      "manager": "المدير",
+      "workLocation": "موقع العمل",
+      "baseSalary": "الراتب الأساسي",
+      "payFrequency": "تكرار الدفع",
+      "bankAccount": "الحساب البنكي",
+      "taxId": "الرقم الضريبي",
+      "payItems": "عناصر الدفع",
+      "item": "العنصر",
+      "type": "النوع",
+      "amount": "المبلغ",
+      "bankDetails": "تفاصيل البنك",
+      "bankName": "اسم البنك",
+      "accountNumber": "رقم الحساب",
+      "branchCode": "رمز الفرع",
+      "primary": "أساسي",
+      "taxProfile": "الملف الضريبي",
+      "filingStatus": "حالة الإيداع",
+      "exemptions": "الإعفاءات",
+      "pensionProfile": "ملف المعاش",
+      "provider": "المزود",
+      "pensionNumber": "رقم المعاش",
+      "contributionRate": "معدل المساهمة",
+      "date": "التاريخ",
+      "checkIn": "وقت الدخول",
+      "checkOut": "وقت الخروج",
+      "hours": "الساعات",
+      "present": "حاضر",
+      "absent": "غائب",
+      "late": "متأخر",
+      "leaveBalances": "أرصدة الإجازة",
+      "leaveType": "نوع الإجازة",
+      "year": "السنة",
+      "balance": "الرصيد",
+      "used": "المستخدم",
+      "available": "المتاح",
+      "pensionPlan": "خطة المعاش",
+      "contracts": "العقود",
+      "started": "بدأ",
+      "ends": "ينتهي",
+      "salary": "الراتب"
+    },
+    "messages": {
+      "errorPrefix": "خطأ",
+      "checkConsole": "تحقق من وحدة تحكم المتصفح لمزيد من التفاصيل",
+      "operationSuccess": "تمت العملية بنجاح",
+      "paginationShowing": "عرض {from} إلى {to} من {total} موظف",
+      "paginationPage": "صفحة {current} من {total}"
+    }
+  },
+  "dashboard": {
+    "title": "لوحة التحكم",
+    "welcome": "مرحباً بك في PayLens",
+    "quickActions": {
+      "newPayrollRun": "تشغيل كشوف مرتبات جديد",
+      "addEmployee": "إضافة موظف",
+      "viewEmployees": "عرض الموظفين",
+      "reports": "التقارير",
+      "integrations": "التكاملات",
+      "aiAssistant": "مساعد AI"
+    },
+    "upcomingPayroll": {
+      "title": "كشوف المرتبات القادمة",
+      "runPayroll": "تشغيل كشوف المرتبات"
+    },
+    "payrollActions": {
+      "title": "إجراءات كشوف المرتبات",
+      "startNewCycle": "بدء دورة كشوف مرتبات جديدة",
+      "calculatePaycheck": "حساب كشف الراتب"
+    },
+    "recentPayroll": {
+      "title": "كشوف المرتبات الأخيرة"
+    },
+    "insights": {
+      "title": "رؤى AI",
+      "recommendations": "التوصيات"
+    },
+    "todos": {
+      "title": "المهام"
+    },
+    "notifications": {
+      "title": "الإشعارات"
+    },
+    "calendar": {
+      "title": "التقويم"
+    }
+  },
+  "language": {
+    "switch": "تغيير اللغة",
+    "current": "اللغة الحالية"
+  },
+  "notifications": {
+    "title": "الإشعارات",
+    "subtitle": "راجع الأنشطة الأخيرة والتنبيهات ورسائل النظام.",
+    "markAllAsRead": "وضع علامة مقروءة على الكل",
+    "markAsRead": "وضع علامة مقروءة",
+    "filters": {
+      "all": "الكل",
+      "unread": "غير مقروء",
+      "type": "النوع",
+      "allTypes": "جميع الأنواع",
+      "payroll": "كشوف المرتبات",
+      "employees": "الموظفون",
+      "documents": "المستندات",
+      "system": "النظام",
+      "integrations": "التكاملات"
+    },
+    "emptyState": {
+      "title": "لا توجد إشعارات بعد",
+      "description": "أنت محدث بالكامل! ستظهر الإشعارات الجديدة هنا."
+    },
+    "time": {
+      "justNow": "الآن",
+      "minutesAgo": "منذ {count} دقيقة",
+      "hoursAgo": "منذ {count} ساعة",
+      "daysAgo": "منذ {count} يوم"
+    }
+  },
+  "errors": {
+    "generic": "حدث خطأ. يرجى المحاولة مرة أخرى.",
+    "network": "خطأ في الشبكة. يرجى التحقق من اتصالك.",
+    "unauthorized": "غير مصرح لك. يرجى تسجيل الدخول مرة أخرى.",
+    "notFound": "لم يتم العثور على المورد المطلوب.",
+    "serverError": "خطأ في الخادم. يرجى المحاولة مرة أخرى لاحقاً."
+  }
+}
+

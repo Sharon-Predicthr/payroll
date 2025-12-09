@@ -1,0 +1,272 @@
+{
+  "common": {
+    "loading": "טוען...",
+    "error": "שגיאה",
+    "success": "הצלחה",
+    "save": "שמור",
+    "cancel": "ביטול",
+    "delete": "מחק",
+    "edit": "ערוך",
+    "add": "הוסף",
+    "search": "חפש",
+    "filter": "סינון",
+    "clear": "נקה",
+    "export": "ייצא",
+    "import": "ייבא",
+    "close": "סגור",
+    "confirm": "אישור",
+    "yes": "כן",
+    "no": "לא",
+    "back": "חזור",
+    "next": "הבא",
+    "previous": "הקודם",
+    "submit": "שלח",
+    "reset": "איפוס",
+    "actions": "פעולות",
+    "status": "סטטוס",
+    "active": "פעיל",
+    "inactive": "לא פעיל",
+    "all": "הכל",
+    "settings": "הגדרות",
+    "notifications": "התראות",
+    "markAllRead": "סמן הכל כנקרא",
+    "noNotifications": "אין התראות",
+    "viewAll": "צפה בהכל"
+  },
+  "auth": {
+    "login": {
+      "title": "התחבר ל-PayLens",
+      "email": "אימייל",
+      "password": "סיסמה",
+      "rememberMe": "זכור אותי",
+      "forgotPassword": "שכחת סיסמה?",
+      "signIn": "התחבר",
+      "signingIn": "מתחבר...",
+      "error": "אימייל או סיסמה שגויים",
+      "emailRequired": "אנא הזן את האימייל שלך",
+      "passwordRequired": "אנא הזן את הסיסמה שלך",
+      "invalidEmail": "אנא הזן כתובת אימייל תקינה"
+    },
+    "logout": "התנתק"
+  },
+  "navigation": {
+    "dashboard": "לוח בקרה",
+    "payroll": "משכורות",
+    "employees": "עובדים",
+    "organization": "ארגון",
+    "reports": "דוחות",
+    "settings": "הגדרות",
+    "integrations": "אינטגרציות",
+    "timeTracking": "מעקב שעות",
+    "notifications": "התראות"
+  },
+  "employees": {
+    "title": "עובדים",
+    "breadcrumb": {
+      "home": "בית"
+    },
+    "addEmployee": "הוסף עובד",
+    "searchPlaceholder": "חפש עובדים...",
+    "noEmployees": "אין עובדים",
+    "noEmployeesFound": "לא נמצאו עובדים",
+    "noEmployeesDescription": "התחל על ידי הוספת העובד הראשון שלך.",
+    "noResultsDescription": "נסה להתאים את המסננים כדי לראות תוצאות נוספות.",
+    "clearFilters": "נקה מסננים",
+    "selectEmployee": "בחר עובד כדי לראות פרטים",
+    "employeeDetails": "פרטי עובד",
+    "name": "שם",
+    "id": "מזהה",
+    "email": "אימייל",
+    "phone": "טלפון",
+    "department": "מחלקה",
+    "position": "תפקיד",
+    "status": "סטטוס",
+    "employmentType": "סוג העסקה",
+    "country": "מדינה",
+    "hireDate": "תאריך העסקה",
+    "terminationDate": "תאריך סיום",
+    "terminate": "סיים העסקה",
+    "terminateConfirm": "האם אתה בטוח שברצונך לסיים את העסקת העובד? פעולה זו אינה ניתנת לביטול.",
+    "terminatedSuccess": "העסקת העובד הסתיימה בהצלחה",
+    "savedSuccess": "פרטי העובד נשמרו בהצלחה",
+    "tabs": {
+      "overview": "סקירה",
+      "personal": "אישי",
+      "employment": "העסקה",
+      "payroll": "משכורת",
+      "timeAttendance": "זמן ונוכחות",
+      "benefits": "הטבות",
+      "documents": "מסמכים והיסטוריה"
+    },
+    "filters": {
+      "allDepartments": "כל המחלקות",
+      "allStatus": "כל הסטטוסים",
+      "allCountries": "כל המדינות",
+      "allTypes": "כל הסוגים"
+    },
+    "pagination": {
+      "showing": "מציג",
+      "to": "עד",
+      "of": "מתוך",
+      "employees": "עובדים",
+      "page": "עמוד",
+      "items": "פריטים"
+    },
+    "emptyStates": {
+      "noData": "אין נתונים זמינים",
+      "noPayItems": "לא נמצאו פריטי תשלום",
+      "noBankDetails": "לא נמצאו פרטי בנק",
+      "noTaxProfile": "לא נמצא פרופיל מס",
+      "noPensionProfile": "לא נמצא פרופיל פנסיה",
+      "noAttendance": "לא נמצאו רשומות נוכחות",
+      "noLeaveBalances": "לא נמצאו יתרות חופש",
+      "noContracts": "לא נמצאו חוזים"
+    },
+    "status": {
+      "active": "פעיל",
+      "inactive": "לא פעיל",
+      "onLeave": "בחופשה"
+    },
+    "employmentTypes": {
+      "fullTime": "משרה מלאה",
+      "partTime": "משרה חלקית",
+      "contract": "חוזה"
+    },
+    "actions": {
+      "payslip": "תלוש שכר",
+      "terminate": "סיים העסקה",
+      "ai": "AI",
+      "retry": "נסה שוב"
+    },
+    "fields": {
+      "employeeId": "מזהה עובד",
+      "firstName": "שם פרטי",
+      "lastName": "שם משפחה",
+      "dateOfBirth": "תאריך לידה",
+      "address": "כתובת",
+      "manager": "מנהל",
+      "workLocation": "מיקום עבודה",
+      "baseSalary": "שכר בסיס",
+      "payFrequency": "תדירות תשלום",
+      "bankAccount": "חשבון בנק",
+      "taxId": "מספר מס",
+      "payItems": "פריטי תשלום",
+      "item": "פריט",
+      "type": "סוג",
+      "amount": "סכום",
+      "bankDetails": "פרטי בנק",
+      "bankName": "שם בנק",
+      "accountNumber": "מספר חשבון",
+      "branchCode": "קוד סניף",
+      "primary": "ראשי",
+      "taxProfile": "פרופיל מס",
+      "filingStatus": "סטטוס הגשה",
+      "exemptions": "פטורים",
+      "pensionProfile": "פרופיל פנסיה",
+      "provider": "ספק",
+      "pensionNumber": "מספר פנסיה",
+      "contributionRate": "שיעור תרומה",
+      "date": "תאריך",
+      "checkIn": "כניסה",
+      "checkOut": "יציאה",
+      "hours": "שעות",
+      "present": "נוכח",
+      "absent": "נעדר",
+      "late": "מאוחר",
+      "leaveBalances": "יתרות חופש",
+      "leaveType": "סוג חופש",
+      "year": "שנה",
+      "balance": "יתרה",
+      "used": "משומש",
+      "available": "זמין",
+      "pensionPlan": "תוכנית פנסיה",
+      "contracts": "חוזים",
+      "started": "התחיל",
+      "ends": "נגמר",
+      "salary": "שכר"
+    },
+    "messages": {
+      "errorPrefix": "שגיאה",
+      "checkConsole": "בדוק את קונסולת הדפדפן לפרטים נוספים",
+      "operationSuccess": "הפעולה הושלמה בהצלחה",
+      "paginationShowing": "מציג {from} עד {to} מתוך {total} עובדים",
+      "paginationPage": "עמוד {current} מתוך {total}"
+    }
+  },
+  "dashboard": {
+    "title": "לוח בקרה",
+    "welcome": "ברוכים הבאים ל-PayLens",
+    "quickActions": {
+      "newPayrollRun": "ריצת משכורות חדשה",
+      "addEmployee": "הוסף עובד",
+      "viewEmployees": "צפה בעובדים",
+      "reports": "דוחות",
+      "integrations": "אינטגרציות",
+      "aiAssistant": "עוזר AI"
+    },
+    "upcomingPayroll": {
+      "title": "משכורות קרובות",
+      "runPayroll": "הרץ משכורות"
+    },
+    "payrollActions": {
+      "title": "פעולות משכורות",
+      "startNewCycle": "התחל מחזור משכורות חדש",
+      "calculatePaycheck": "חשב תלוש משכורת"
+    },
+    "recentPayroll": {
+      "title": "משכורות אחרונות"
+    },
+    "insights": {
+      "title": "תובנות AI",
+      "recommendations": "המלצות"
+    },
+    "todos": {
+      "title": "משימות"
+    },
+    "notifications": {
+      "title": "התראות"
+    },
+    "calendar": {
+      "title": "יומן"
+    }
+  },
+  "language": {
+    "switch": "החלף שפה",
+    "current": "שפה נוכחית"
+  },
+  "notifications": {
+    "title": "התראות",
+    "subtitle": "סקור פעילות אחרונה, התראות והודעות מערכת.",
+    "markAllAsRead": "סמן הכל כנקרא",
+    "markAsRead": "סמן כנקרא",
+    "filters": {
+      "all": "הכל",
+      "unread": "לא נקרא",
+      "type": "סוג",
+      "allTypes": "כל הסוגים",
+      "payroll": "משכורות",
+      "employees": "עובדים",
+      "documents": "מסמכים",
+      "system": "מערכת",
+      "integrations": "אינטגרציות"
+    },
+    "emptyState": {
+      "title": "אין התראות עדיין",
+      "description": "אתה מעודכן! התראות חדשות יופיעו כאן."
+    },
+    "time": {
+      "justNow": "ממש עכשיו",
+      "minutesAgo": "לפני {count} דקות",
+      "hoursAgo": "לפני {count} שעות",
+      "daysAgo": "לפני {count} ימים"
+    }
+  },
+  "errors": {
+    "generic": "אירעה שגיאה. אנא נסה שוב.",
+    "network": "שגיאת רשת. אנא בדוק את החיבור שלך.",
+    "unauthorized": "אינך מורשה. אנא התחבר שוב.",
+    "notFound": "המשאב המבוקש לא נמצא.",
+    "serverError": "שגיאת שרת. אנא נסה שוב מאוחר יותר."
+  }
+}
+

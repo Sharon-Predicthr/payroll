@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug JWT Token</title>
+</head>
+<body>
+    <h1>JWT Token Debug</h1>
+    <button onclick="decodeToken()">Decode My JWT Token</button>
+    <div id="output" style="margin-top: 20px; padding: 10px; background: #f0f0f0; white-space: pre-wrap;"></div>
+
+    <script>
+        function decodeToken() {
+            const token = localStorage.getItem('paylens_access_token');
+            if (!token) {
+                document.getElementById('output').textContent = 'No token found in localStorage';
+                return;
+            }
+
+            try {
+                const parts = token.split('.');
+                if (parts.length !== 3) {
+                    document.getElementById('output').textContent = 'Invalid token format';
+                    return;
+                }
+
+                const payload = JSON.parse(atob(parts[1]));
+                const header = JSON.parse(atob(parts[0]));
+
+                const output = {
+                    header: header,
+                    payload: payload,
+                    userInfo: {
+                        userId: payload.sub,
+                        email: payload.email,
+                        tenantCode: payload.tenantCode,
+                        role: payload.role
+                    }
+                };
+
+                document.getElementById('output').textContent = JSON.stringify(output, null, 2);
+            } catch (error) {
+                document.getElementById('output').textContent = 'Error decoding token: ' + error.message;
+            }
+        }
+    </script>
+</body>
+</html>
+
