@@ -18,13 +18,14 @@ interface CreateUnitDialogProps {
   levels: OrgLevel[];
   parentId?: number | null;
   parentName?: string;
+  parentLevelOrder?: number;
   onSuccess: (data: {
     level_key: string;
     parent_id: number | null;
     name: string;
     code: string;
     is_active: boolean;
-  }) => void;
+  }) => Promise<void>;
 }
 
 export function CreateUnitDialog({
@@ -33,6 +34,7 @@ export function CreateUnitDialog({
   levels,
   parentId,
   parentName,
+  parentLevelOrder,
   onSuccess,
 }: CreateUnitDialogProps) {
   const [levelKey, setLevelKey] = useState("");
@@ -41,14 +43,23 @@ export function CreateUnitDialog({
   const [isActive, setIsActive] = useState(true);
   const hasInitialized = useRef(false);
 
-  // Filter levels - if parentId exists, only show levels with order > parent's level order
+  // Filter levels based on parent
   // Root units must be level 1 (Region)
-  // Use useMemo to prevent recalculation on every render
+  // Child units must be a level higher than parent's level
   const availableLevels = useMemo(() => {
-    return parentId
-      ? levels.filter((l) => l.is_active) // For child units, show all active levels
-      : levels.filter((l) => l.is_active && l.level_order === 1); // Root units must be level 1 (Region)
-  }, [parentId, levels]);
+    if (!parentId) {
+      // Root units: only level 1 (Region)
+      return levels.filter((l) => l.is_active && l.level_order === 1);
+    }
+    
+    // For child units, show only levels with order > parent's level order
+    if (parentLevelOrder !== undefined) {
+      return levels.filter((l) => l.is_active && l.level_order > parentLevelOrder);
+    }
+    
+    // Fallback: show all active levels > 1 (backend will validate)
+    return levels.filter((l) => l.is_active && l.level_order > 1);
+  }, [parentId, parentLevelOrder, levels]);
 
   // Only reset form when dialog FIRST opens, not on every render
   useEffect(() => {
@@ -65,7 +76,7 @@ export function CreateUnitDialog({
     }
   }, [open, parentId, availableLevels]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!levelKey) {
@@ -81,15 +92,21 @@ export function CreateUnitDialog({
       return;
     }
 
-    onSuccess({
-      level_key: levelKey,
-      parent_id: parentId || null,
-      name: name.trim(),
-      code: code.trim(),
-      is_active: isActive,
-    });
-    
-    onOpenChange(false);
+    // Call onSuccess and let it handle the async operation
+    // Don't close dialog here - let the parent handle it after success
+    try {
+      await onSuccess({
+        level_key: levelKey,
+        parent_id: parentId || null,
+        name: name.trim(),
+        code: code.trim(),
+        is_active: isActive,
+      });
+      // Dialog will be closed by parent after successful creation
+    } catch (error) {
+      // Error already handled in parent, just keep dialog open
+      console.error("[CreateUnitDialog] Error in onSuccess:", error);
+    }
   };
 
   if (!open) return null;

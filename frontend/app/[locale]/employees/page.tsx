@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useLocale } from 'next-intl';
 import { useTranslations } from 'next-intl';
@@ -15,6 +15,7 @@ import { Select } from "@/components/ui/select";
 import { Toast } from "@/components/ui/toast";
 import { useDirection } from "@/contexts/DirectionContext";
 import { isAuthenticated } from "@/lib/auth";
+import { CreatePayslipsDialog } from "./components/CreatePayslipsDialog";
 
 // Force dynamic rendering
 export const dynamic = 'force-dynamic';
@@ -78,6 +79,8 @@ export default function EmployeesPage() {
   const [listWidth, setListWidth] = useState(35); // Percentage
   const [isResizing, setIsResizing] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<Set<string>>(new Set());
+  const [showCreatePayslipsDialog, setShowCreatePayslipsDialog] = useState(false);
   
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -103,7 +106,7 @@ export default function EmployeesPage() {
   // Fetch employee detail when selected
   useEffect(() => {
     if (selectedEmployee) {
-      console.log('[Frontend] Employee selected, fetching detail for:', selectedEmployee.id);
+      console.log('[Frontend] Employee selected, fetching detail for:', selectedEmployee.id, selectedEmployee.name);
       fetchEmployeeDetail(selectedEmployee.id);
     } else {
       console.log('[Frontend] No employee selected, clearing detail');
@@ -118,59 +121,98 @@ export default function EmployeesPage() {
       setError(null);
       
       const token = localStorage.getItem('paylens_access_token');
-      console.log('[Frontend] Token exists:', !!token);
-      console.log('[Frontend] Token length:', token?.length || 0);
+      console.log('[EmployeesPage] ===== Fetching employees =====');
+      console.log('[EmployeesPage] Token exists:', !!token);
+      console.log('[EmployeesPage] Token length:', token?.length || 0);
+      console.log('[EmployeesPage] Page:', currentPage, 'Limit:', pageSize);
       
       if (!token) {
-        console.error('[Frontend] No token found, redirecting to login');
+        console.error('[EmployeesPage] No token found, redirecting to login');
         router.push(`/${locale}/login`);
         return;
       }
       
-      console.log('[Frontend] Making request to /api/employees with token');
-      const response = await fetch(`/api/employees?page=${currentPage}&limit=${pageSize}`, {
+      const url = `/api/employees?page=${currentPage}&limit=${pageSize}`;
+      console.log('[EmployeesPage] Making request to:', url);
+      
+      const response = await fetch(url, {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
+        cache: 'no-store', // Force fresh fetch
       });
       
-      console.log('[Frontend] Response status:', response.status);
+      console.log('[EmployeesPage] Response status:', response.status);
+      console.log('[EmployeesPage] Response ok:', response.ok);
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to fetch employees');
+        let errorData;
+        try {
+          errorData = await response.json();
+        } catch {
+          errorData = { message: `HTTP ${response.status}: ${response.statusText}` };
+        }
+        console.error('[EmployeesPage] Error response:', errorData);
+        throw new Error(errorData.message || `Failed to fetch employees (${response.status})`);
       }
 
       const data = await response.json();
-      console.log('Employees API response:', data);
+      console.log('[EmployeesPage] Response data:', JSON.stringify(data, null, 2));
+      
+      // Handle both success format and direct data format
+      let employeesData = null;
+      let paginationData = null;
       
       if (data.success && data.data) {
-        const mappedEmployees = data.data.map(mapBackendToFrontend);
-        console.log('Mapped employees:', mappedEmployees);
-        setEmployees(mappedEmployees);
-        
-        // Update pagination info
-        if (data.pagination) {
-          setTotalEmployees(data.pagination.total);
-          setTotalPages(data.pagination.totalPages);
-        }
-        
-        // Select first employee if available and no employee is selected
-        if (mappedEmployees.length > 0 && !selectedEmployee) {
-          setSelectedEmployee(mappedEmployees[0]);
-        } else if (mappedEmployees.length === 0 && selectedEmployee) {
-          // If current page is empty, clear selection
-          setSelectedEmployee(null);
-          setSelectedEmployeeDetail(null);
-        }
+        // Backend returns { success: true, data: [...], pagination: {...} }
+        employeesData = data.data;
+        paginationData = data.pagination;
+      } else if (Array.isArray(data)) {
+        // Direct array response
+        employeesData = data;
+      } else if (data.data && Array.isArray(data.data)) {
+        // Nested data format
+        employeesData = data.data;
+        paginationData = data.pagination;
       } else {
-        console.warn('Unexpected response format:', data);
-        setError('No employees found or invalid response format');
+        console.warn('[EmployeesPage] Unexpected response format:', data);
+        setError('Invalid response format from server');
+        setEmployees([]);
+        return;
       }
+      
+      if (!employeesData || !Array.isArray(employeesData)) {
+        console.warn('[EmployeesPage] No employees array in response');
+        setError('No employees data received');
+        setEmployees([]);
+        return;
+      }
+      
+      console.log('[EmployeesPage] Received', employeesData.length, 'employees');
+      const mappedEmployees = employeesData.map(mapBackendToFrontend);
+      console.log('[EmployeesPage] Mapped employees:', mappedEmployees.length);
+      
+      setEmployees(mappedEmployees);
+      
+      // Update pagination info
+      if (paginationData) {
+        setTotalEmployees(paginationData.total || mappedEmployees.length);
+        setTotalPages(paginationData.totalPages || 1);
+      } else {
+        // If no pagination info, assume all data is loaded
+        setTotalEmployees(mappedEmployees.length);
+        setTotalPages(1);
+      }
+      
+      // Don't auto-select here - let useEffect handle it based on filteredAndSortedEmployees
+      
+      console.log('[EmployeesPage] ✅ Fetch completed successfully');
     } catch (err: any) {
-      console.error('Error fetching employees:', err);
-      setError(err.message || 'Failed to load employees');
+      console.error('[EmployeesPage] ❌ Error fetching employees:', err);
+      console.error('[EmployeesPage] Error stack:', err.stack);
+      setError(err.message || 'Failed to load employees. Please check console for details.');
+      setEmployees([]);
     } finally {
       setLoading(false);
     }
@@ -237,9 +279,7 @@ export default function EmployeesPage() {
   const [filterCountry, setFilterCountry] = useState("all");
   const [filterEmploymentType, setFilterEmploymentType] = useState("all");
   
-  // Sorting state
-  const [sortColumn, setSortColumn] = useState<keyof Employee | null>(null);
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+  // Sorting is handled by DataGrid internally (via localStorage)
   
   // Debounce search query
   useEffect(() => {
@@ -250,9 +290,9 @@ export default function EmployeesPage() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  // Filter and sort employees
-  const filteredAndSortedEmployees = useMemo(() => {
-    let filtered = employees.filter((emp) => {
+  // Filter employees (DataGrid will handle sorting internally)
+  const filteredEmployees = useMemo(() => {
+    return employees.filter((emp) => {
       const matchesSearch =
         emp.name.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
         emp.email.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
@@ -271,31 +311,56 @@ export default function EmployeesPage() {
         matchesEmploymentType
       );
     });
+  }, [employees, debouncedSearchQuery, filterDepartment, filterStatus, filterCountry, filterEmploymentType]);
 
-    // Apply sorting
-    if (sortColumn) {
-      filtered = [...filtered].sort((a, b) => {
-        const aValue = a[sortColumn];
-        const bValue = b[sortColumn];
-        
-        if (aValue === undefined || aValue === null) return 1;
-        if (bValue === undefined || bValue === null) return -1;
-        
-        if (typeof aValue === 'string' && typeof bValue === 'string') {
-          const comparison = aValue.localeCompare(bValue);
-          return sortDirection === "asc" ? comparison : -comparison;
-        }
-        
-        if (typeof aValue === 'number' && typeof bValue === 'number') {
-          return sortDirection === "asc" ? aValue - bValue : bValue - aValue;
-        }
-        
-        return 0;
-      });
+  // Track the sorted data from DataGrid
+  const [sortedEmployees, setSortedEmployees] = useState<Employee[]>(filteredEmployees);
+
+  // Update sorted employees when filtered employees change
+  useEffect(() => {
+    setSortedEmployees(filteredEmployees);
+  }, [filteredEmployees]);
+
+  // Handle sorted data change from DataGrid
+  const handleSortedDataChange = useCallback((sortedData: Employee[]) => {
+    setSortedEmployees(sortedData);
+  }, []);
+
+  // Handle sort change from DataGrid
+  const handleSortChange = useCallback((sortColumn: string | null, sortDirection: 'asc' | 'desc') => {
+    // DataGrid handles sorting internally, we just need to track it
+    // The sorted data will be available through onSortedDataChange
+  }, []);
+
+  // Auto-select first employee from sorted list when it changes
+  // This ensures the selected employee matches what's displayed first in the DataGrid
+  useEffect(() => {
+    // Skip if still loading
+    if (loading) {
+      return;
     }
 
-    return filtered;
-  }, [employees, debouncedSearchQuery, filterDepartment, filterStatus, filterCountry, filterEmploymentType, sortColumn, sortDirection]);
+    if (sortedEmployees.length === 0) {
+      // If sorted list is empty, clear selection
+      if (selectedEmployee) {
+        console.log('[EmployeesPage] Sorted list is empty, clearing selection');
+        setSelectedEmployee(null);
+        setSelectedEmployeeDetail(null);
+      }
+      return;
+    }
+
+    // Always select the first employee from the sorted list (as displayed in DataGrid)
+    // This ensures the selected employee matches what's displayed first in the DataGrid
+    const firstEmployee = sortedEmployees[0];
+    
+    // Only update if the first employee is different from the currently selected one
+    if (!selectedEmployee || selectedEmployee.id !== firstEmployee.id) {
+      console.log('[EmployeesPage] Auto-selecting first employee from sorted list (as displayed in DataGrid):', firstEmployee.id, firstEmployee.name);
+      setSelectedEmployee(firstEmployee);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortedEmployees, loading]);
 
   const departments = Array.from(new Set(employees.map((e) => e.department).filter(Boolean)));
   const countries = Array.from(new Set(employees.map((e) => e.country).filter(Boolean)));
@@ -316,20 +381,7 @@ export default function EmployeesPage() {
     setFilterStatus("all");
     setFilterCountry("all");
     setFilterEmploymentType("all");
-    setSortColumn(null);
-    setSortDirection("asc");
-  };
-
-  // Handle column sort
-  const handleSort = (column: keyof Employee) => {
-    if (sortColumn === column) {
-      // Toggle direction if same column
-      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
-    } else {
-      // New column, start with ascending
-      setSortColumn(column);
-      setSortDirection("asc");
-    }
+    // Sorting is handled by DataGrid internally
   };
 
   const handleSave = () => {
@@ -444,17 +496,31 @@ export default function EmployeesPage() {
             </nav>
             <h1 className="text-2xl font-semibold text-text-main">{t('title')}</h1>
           </div>
-          <Button
-            variant="primary"
-            onClick={() => {
-              /* Add employee logic */
-            }}
-          >
-            <svg className="w-4 h-4 mr-2 rtl:mr-0 rtl:ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-{t('addEmployee')}
-          </Button>
+          <div className="flex gap-2">
+            {(selectedEmployeeIds.size > 0 || employees.length > 0) && (
+              <Button
+                variant="outline"
+                onClick={() => setShowCreatePayslipsDialog(true)}
+                className="flex items-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                צור תלושי שכר
+              </Button>
+            )}
+            <Button
+              variant="primary"
+              onClick={() => {
+                /* Add employee logic */
+              }}
+            >
+              <svg className="w-4 h-4 mr-2 rtl:mr-0 rtl:ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              {t('addEmployee')}
+            </Button>
+          </div>
         </div>
 
         {/* Toolbar - Compact Single Row */}
@@ -673,7 +739,7 @@ export default function EmployeesPage() {
         )}
 
         {/* Main Content - Resizable Split View */}
-        <div className="flex gap-0 h-[calc(100vh-220px)] relative" data-split-container dir={direction}>
+        <div className="flex gap-0 h-[calc(100vh-220px)] relative z-0 pointer-events-auto" data-split-container dir={direction}>
           {/* Left Side - Employees List */}
           <div
             className="bg-white border-r rtl:border-r-0 rtl:border-l border-gray-200 overflow-hidden"
@@ -683,7 +749,7 @@ export default function EmployeesPage() {
               <div className="flex-1 overflow-y-auto">
                 {loading ? (
                   <EmployeeListSkeleton viewMode={viewMode} />
-                ) : filteredAndSortedEmployees.length === 0 ? (
+                ) : filteredEmployees.length === 0 ? (
                     <EmptyState
                       title={hasActiveFilters ? t('noEmployeesFound') : t('noEmployees')}
                       description={
@@ -704,13 +770,26 @@ export default function EmployeesPage() {
                     />
                   ) : (
                     <EmployeeList
-                      employees={filteredAndSortedEmployees}
+                      employees={filteredEmployees}
                       selectedEmployee={selectedEmployee}
                       viewMode={viewMode}
-                      onSelectEmployee={setSelectedEmployee}
-                      sortColumn={sortColumn}
-                      sortDirection={sortDirection}
-                      onSort={handleSort}
+                      onSelectEmployee={(emp) => {
+                        console.log('[EmployeesPage] Employee manually selected:', emp.id, emp.name);
+                        setSelectedEmployee(emp);
+                        // Toggle multi-select
+                        setSelectedEmployeeIds(prev => {
+                          const newSet = new Set(prev);
+                          if (newSet.has(emp.id)) {
+                            newSet.delete(emp.id);
+                          } else {
+                            newSet.add(emp.id);
+                          }
+                          return newSet;
+                        });
+                      }}
+                      selectedEmployeeIds={selectedEmployeeIds}
+                      onSortChange={handleSortChange}
+                      onSortedDataChange={handleSortedDataChange}
                     />
                   )}
                 </div>
@@ -808,6 +887,18 @@ export default function EmployeesPage() {
             )}
           </div>
         </div>
+
+        {/* Create Payslips Dialog */}
+        <CreatePayslipsDialog
+          open={showCreatePayslipsDialog}
+          onOpenChange={setShowCreatePayslipsDialog}
+          selectedEmployees={employees.filter(emp => selectedEmployeeIds.has(emp.id))}
+          allEmployees={employees}
+          onSuccess={() => {
+            setShowCreatePayslipsDialog(false);
+            setSelectedEmployeeIds(new Set());
+          }}
+        />
       </div>
     </PageShell>
   );

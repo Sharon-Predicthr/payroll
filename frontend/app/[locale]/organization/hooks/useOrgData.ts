@@ -34,6 +34,7 @@ export function useOrgData() {
   const [tree, setTree] = useState<OrgUnit[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0); // Force re-render trigger
 
   const fetchLevels = useCallback(async () => {
     try {
@@ -102,8 +103,94 @@ export function useOrgData() {
   }, []);
 
   const refreshTree = useCallback(async () => {
-    await fetchTree();
-  }, [fetchTree]);
+    console.log("[useOrgData] ===== START REFRESH TREE ===== ");
+    
+    // CLEAR tree state first to prevent stale data
+    console.log("[useOrgData] Clearing tree state...");
+    setTree([]);
+    setLoading(true);
+    setError(null);
+    
+    // Force a state update to trigger re-render
+    setRefreshKey(prev => prev + 1);
+    
+    // Small delay to ensure state is cleared
+    await new Promise(resolve => setTimeout(resolve, 50));
+    
+    try {
+      const authHeader = getAuthHeader();
+      if (!authHeader) throw new Error("Not authenticated");
+
+      const url = `${API_BASE_URL}/org/tree`;
+      const timestamp = Date.now();
+      const fullUrl = `${url}?t=${timestamp}`;
+      console.log("[useOrgData] Fetching from:", fullUrl);
+
+      // Add timestamp to prevent caching
+      const response = await fetch(fullUrl, {
+        headers: { 
+          Authorization: authHeader,
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0'
+        },
+        cache: 'no-store', // Force fresh fetch
+        method: 'GET',
+      });
+
+      console.log("[useOrgData] Response status:", response.status);
+      console.log("[useOrgData] Response ok:", response.ok);
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error("[useOrgData] Refresh error response:", errorData);
+        throw new Error(errorData.message || "Failed to fetch tree");
+      }
+
+      const data = await response.json();
+      const treeData = data.data || data || [];
+      console.log("[useOrgData] ✅ Received", treeData.length, "root units from backend");
+      
+      // Log ALL units in the tree (flattened) to see what we're getting
+      const flattenTree = (units: OrgUnit[]): OrgUnit[] => {
+        const result: OrgUnit[] = [];
+        units.forEach(unit => {
+          result.push(unit);
+          if (unit.children && unit.children.length > 0) {
+            result.push(...flattenTree(unit.children));
+          }
+        });
+        return result;
+      };
+      
+      const allUnits = flattenTree(treeData);
+      console.log("[useOrgData] 📋 Total units in tree (including children):", allUnits.length);
+      console.log("[useOrgData] 📋 Unit IDs:", allUnits.map(u => u.id));
+      
+      // Check for phantom "פיתוח" unit
+      const hasPituach = allUnits.some(u => u.name === "פיתוח" || u.name?.includes("פיתוח"));
+      if (hasPituach) {
+        console.error("[useOrgData] ⚠️ WARNING: Backend returned 'פיתוח' unit!");
+        const pituachUnit = allUnits.find(u => u.name === "פיתוח" || u.name?.includes("פיתוח"));
+        console.error("[useOrgData] Pituach unit from backend:", pituachUnit);
+      }
+      
+      // Force state update with new array reference - deep clone to ensure React detects change
+      console.log("[useOrgData] Updating state with new tree data...");
+      const clonedTree = JSON.parse(JSON.stringify(treeData));
+      setTree(clonedTree);
+      setError(null);
+      setLoading(false);
+      
+      console.log("[useOrgData] ✅ State updated successfully. Tree now has", clonedTree.length, "root units");
+      console.log("[useOrgData] ===== END REFRESH TREE ===== ");
+    } catch (err: any) {
+      console.error("[useOrgData] ❌ Error refreshing tree:", err);
+      setError(err.message);
+      setLoading(false);
+      console.log("[useOrgData] ===== END REFRESH TREE (ERROR) ===== ");
+    }
+  }, []);
 
   useEffect(() => {
     fetchLevels();

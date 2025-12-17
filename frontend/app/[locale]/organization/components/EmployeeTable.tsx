@@ -162,7 +162,7 @@ export function EmployeeTable({ unitId, onRefresh }: EmployeeTableProps) {
               <td className="py-3 px-4">
                 <Button
                   variant="ghost"
-                  size="sm"
+                  className="h-8 px-3 text-xs"
                   onClick={() => handleRemove(emp.employee_id)}
                   className="text-red-600 hover:text-red-700 hover:bg-red-50"
                 >

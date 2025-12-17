@@ -4,6 +4,7 @@ import { getMessages } from 'next-intl/server';
 import { notFound } from 'next/navigation';
 import { locales, type Locale } from '@/i18n';
 import { DirectionProvider } from "@/contexts/DirectionContext";
+import { PayrollPeriodProvider } from "@/contexts/PayrollPeriodContext";
 
 const inter = Inter({ 
   subsets: ["latin"],
@@ -69,7 +70,9 @@ export default async function LocaleLayout({
     <div className={`${inter.variable} ${notoSansHebrew.variable} ${notoSansArabic.variable}`}>
       <NextIntlClientProvider messages={messages}>
         <DirectionProvider locale={locale}>
-          {children}
+          <PayrollPeriodProvider>
+            {children}
+          </PayrollPeriodProvider>
         </DirectionProvider>
       </NextIntlClientProvider>
     </div>

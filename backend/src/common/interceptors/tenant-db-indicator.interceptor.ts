@@ -35,18 +35,34 @@ export class TenantDbIndicatorInterceptor implements NestInterceptor {
         // Add DB connection info to response
         const response = context.switchToHttp().getResponse();
         
+        // Check if response has already been sent (headersSent is true)
+        // This happens when using @Res() decorator and res.send() directly
+        if (response.headersSent) {
+          // Response already sent, can't modify headers or body
+          return data;
+        }
+        
         // Get tenant info if available
         if (tenantCode) {
           const tenantInfo = this.tenantResolver.getCachedTenantInfo(tenantCode);
           
           if (tenantInfo) {
-            // Add to response headers (for easy inspection)
-            response.setHeader('X-Tenant-DB-Host', tenantInfo.db_host);
-            response.setHeader('X-Tenant-DB-Name', tenantInfo.db_name);
-            response.setHeader('X-Tenant-Code', tenantInfo.code);
+            try {
+              // Add to response headers (for easy inspection)
+              // Only if headers haven't been sent yet
+              if (!response.headersSent) {
+                response.setHeader('X-Tenant-DB-Host', tenantInfo.db_host);
+                response.setHeader('X-Tenant-DB-Name', tenantInfo.db_name);
+                response.setHeader('X-Tenant-Code', tenantInfo.code);
+              }
+            } catch (error) {
+              // Ignore errors if headers already sent
+              // This can happen with @Res() decorator
+            }
             
-            // Add to response body if it's an object
-            if (data && typeof data === 'object' && !Array.isArray(data)) {
+            // Add to response body if it's an object and response hasn't been sent
+            // Skip if data is a Buffer (like PDF) or response already sent
+            if (data && typeof data === 'object' && !Array.isArray(data) && !Buffer.isBuffer(data) && !response.headersSent) {
               return {
                 ...data,
                 _dbInfo: {

@@ -7,6 +7,7 @@ import { useDirection } from "@/contexts/DirectionContext";
 import { getUser, getTenant, clearAuthData, isAuthenticated } from "@/lib/auth";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
+import { PayrollPeriodSelector } from "@/components/PayrollPeriodSelector";
 
 export function TopBar() {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -25,34 +26,61 @@ export function TopBar() {
     }
   }, []);
 
-  const handleLogout = async () => {
+  const handleLogout = async (e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    
     try {
+      setIsDropdownOpen(false);
+      
       const token = localStorage.getItem('paylens_access_token');
       if (token) {
         // Call logout endpoint via Next.js API route
-        await fetch('/api/auth/logout', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-          },
-        }).catch(() => {
-          // Ignore errors - still clear local data
-        });
+        try {
+          await fetch('/api/auth/logout', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`,
+            },
+          });
+        } catch (fetchError) {
+          // Ignore fetch errors - still clear local data
+          console.warn('Logout API call failed, but continuing with logout:', fetchError);
+        }
+      }
+      
+      // Always clear local data
+      clearAuthData();
+      
+      // Get locale from pathname or default to 'he'
+      const locale = typeof window !== 'undefined' 
+        ? (window.location.pathname.split('/')[1] || 'he')
+        : 'he';
+      
+      // Use window.location for immediate redirect
+      if (typeof window !== 'undefined') {
+        window.location.href = `/${locale}/login`;
+      } else {
+        router.push(`/${locale}/login`);
       }
     } catch (error) {
       console.error('Logout error:', error);
-    } finally {
-      // Always clear local data and redirect
+      // Even on error, try to clear and redirect
       clearAuthData();
-      setIsDropdownOpen(false);
-      const locale = window.location.pathname.split('/')[1] || 'en';
-      router.push(`/${locale}/login`);
+      const locale = typeof window !== 'undefined' 
+        ? (window.location.pathname.split('/')[1] || 'he')
+        : 'he';
+      if (typeof window !== 'undefined') {
+        window.location.href = `/${locale}/login`;
+      }
     }
   };
 
   return (
-    <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
+    <header className="bg-white border-b border-gray-200 sticky top-0 z-40">
       <div className="px-6 py-4">
         <div className="flex items-center justify-between">
           {/* Logo */}
@@ -65,8 +93,13 @@ export function TopBar() {
             </span>
           </div>
 
+          {/* Payroll Period Selector - Conspicuously visible at the top */}
+          <div className="flex-1 flex justify-center mx-8">
+            <PayrollPeriodSelector />
+          </div>
+
           {/* Search */}
-          <div className="flex-1 max-w-2xl mx-8">
+          <div className="flex-1 max-w-xl">
             <div className="relative">
               <input
                 type="search"
@@ -91,6 +124,7 @@ export function TopBar() {
 
           {/* Right side */}
           <div className="flex items-center gap-4">
+            
             {/* Language Switcher */}
             <LanguageSwitcher />
 
@@ -133,7 +167,7 @@ export function TopBar() {
               {isDropdownOpen && (
                 <>
                   <div
-                    className="fixed inset-0 z-40"
+                    className="fixed inset-0 z-20"
                     onClick={() => setIsDropdownOpen(false)}
                   ></div>
                   <div className="absolute right-0 rtl:right-auto rtl:left-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-50">
@@ -153,8 +187,9 @@ export function TopBar() {
                     </a>
                     <hr className="my-2 border-gray-200" />
                     <button
-                      onClick={handleLogout}
+                      onClick={(e) => handleLogout(e)}
                       className="block w-full text-left rtl:text-right px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                      type="button"
                     >
                       {t('logout')}
                     </button>

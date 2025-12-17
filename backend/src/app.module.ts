@@ -6,6 +6,9 @@ import { EmployeesModule } from './modules/employees/employees.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { JobsModule } from './modules/jobs/jobs.module';
 import { OrganizationModule } from './modules/organization/organization.module';
+import { PayslipsModule } from './modules/payslips/payslips.module';
+import { LookupModule } from './modules/lookup/lookup.module';
+import { PayrollPeriodsModule } from './modules/payroll-periods/payroll-periods.module';
 import { TenantDbLoggerMiddleware } from './common/middleware/tenant-db-logger.middleware';
 import { SmartRouterMiddleware } from './router/smart-router.middleware';
 
@@ -21,6 +24,9 @@ import { SmartRouterMiddleware } from './router/smart-router.middleware';
     NotificationsModule,
     JobsModule, // Add Jobs module
     OrganizationModule, // Add Organization module
+    PayslipsModule, // Add Payslips module
+    LookupModule, // Add Lookup module
+    PayrollPeriodsModule, // Add Payroll Periods module
   ],
   controllers: [],
   providers: [SmartRouterMiddleware],

@@ -1,0 +1,153 @@
+export const mockPayslipData = {
+  payslip: {
+    id: "PS-202412-EMP001-1701234567890",
+    month: 12,
+    year: 2024,
+    generation_date: "2024-12-15T10:30:00.000Z",
+    version: "1.0",
+  },
+  company: {
+    name: "חברת דוגמה בע״מ",
+    registration_number: "123456789",
+  },
+  employee: {
+    full_name: "יוסי כהן",
+    employee_id: "EMP001",
+    national_id: "123456789",
+    address: "רחוב הרצל 15, תל אביב",
+    employment_start_date: "2020-01-15T00:00:00.000Z",
+    seniority_years: 4,
+    job_percentage: 100,
+    department: "פיתוח",
+    work_center: "מרכז פיתוח תל אביב",
+    position: "מפתח תוכנה",
+    grade: "בינוני",
+    marital_status: "נשוי",
+    bank_name: "בנק הפועלים",
+    branch_number: "600",
+    account_number: "123456",
+  },
+  earnings: [
+    {
+      code: "SALARY",
+      description: "שכר בסיס",
+      quantity: 1,
+      rate: 15000.00,
+      taxable_value: 15000.00,
+      amount: 15000.00,
+      explanation: "שכר חודשי בסיס",
+    },
+    {
+      code: "BONUS",
+      description: "בונוס",
+      quantity: 1,
+      rate: 2000.00,
+      taxable_value: 2000.00,
+      amount: 2000.00,
+      explanation: "בונוס חודשי",
+    },
+    {
+      code: "OVERTIME",
+      description: "שעות נוספות",
+      quantity: 10,
+      rate: 150.00,
+      taxable_value: 1500.00,
+      amount: 1500.00,
+      explanation: "10 שעות נוספות",
+    },
+  ],
+  deductions: [
+    {
+      description: "מס הכנסה",
+      amount: 3400.00,
+    },
+    {
+      description: "ביטוח לאומי",
+      amount: 750.00,
+    },
+    {
+      description: "ביטוח בריאות",
+      amount: 450.00,
+    },
+    {
+      description: "פנסיה",
+      amount: 900.00,
+    },
+    {
+      description: "קרן השתלמות",
+      amount: 500.00,
+    },
+  ],
+  totals: {
+    total_earnings: 18500.00,
+    total_deductions: 6000.00,
+    net_salary: 12500.00,
+    taxable_salary: 18500.00,
+    insured_salary: 15000.00,
+    tax_percentage: 18.38,
+    credit_points: 2.25,
+  },
+  attendance: {
+    work_days: 22,
+    work_hours: 176,
+    absence_days: 0,
+  },
+  balances: {
+    vacation: {
+      previous_balance: 10.0,
+      accrued: 1.83,
+      used: 0,
+      new_balance: 11.83,
+    },
+    sick: {
+      previous_balance: 5.0,
+      accrued: 0.5,
+      used: 0,
+      new_balance: 5.5,
+    },
+  },
+  permissions: {
+    can_edit: true,
+    can_download_pdf: true,
+  },
+};
+
+export const mockPayslipList = [
+  {
+    id: "PS-202412-EMP001-1701234567890",
+    month: 12,
+    year: 2024,
+    employee_name: "יוסי כהן",
+    employee_id: "EMP001",
+    net_salary: 12500.00,
+    generation_date: "2024-12-15T10:30:00.000Z",
+  },
+  {
+    id: "PS-202411-EMP001-1700834567890",
+    month: 11,
+    year: 2024,
+    employee_name: "יוסי כהן",
+    employee_id: "EMP001",
+    net_salary: 12500.00,
+    generation_date: "2024-11-15T10:30:00.000Z",
+  },
+  {
+    id: "PS-202412-EMP002-1701234567891",
+    month: 12,
+    year: 2024,
+    employee_name: "שרה לוי",
+    employee_id: "EMP002",
+    net_salary: 18000.00,
+    generation_date: "2024-12-15T10:30:00.000Z",
+  },
+  {
+    id: "PS-202411-EMP002-1700834567891",
+    month: 11,
+    year: 2024,
+    employee_name: "שרה לוי",
+    employee_id: "EMP002",
+    net_salary: 18000.00,
+    generation_date: "2024-11-15T10:30:00.000Z",
+  },
+];
+

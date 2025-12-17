@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useLocale } from "next-intl";
 import { useTranslations } from "next-intl";
@@ -28,7 +28,21 @@ export default function OrganizationPage() {
   const { levels, tree, loading, error, refreshTree, fetchLevels } = useOrgData();
   const [selectedUnitId, setSelectedUnitId] = useState<number | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
-  const [createDialogParent, setCreateDialogParent] = useState<{ id: number | null; name?: string } | null>(null);
+  const [createDialogParent, setCreateDialogParent] = useState<{ 
+    id: number | null; 
+    name?: string;
+    level_key?: string;
+    level_order?: number;
+  } | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted) {
+    return null; // Prevent hydration mismatch
+  }
 
   if (!isAuthenticated()) {
     router.push(`/${locale}/login`);
@@ -82,20 +96,25 @@ export default function OrganizationPage() {
   };
 
   const handleAdd = (parentId: number | null) => {
-    // Find parent unit name from tree
-    const findUnitName = (units: typeof tree, id: number | null): string | undefined => {
+    // Find parent unit info from tree
+    const findUnit = (units: typeof tree, id: number | null): OrgUnit | undefined => {
       for (const unit of units) {
-        if (unit.id === id) return unit.name;
+        if (unit.id === id) return unit;
         if (unit.children) {
-          const found = findUnitName(unit.children, id);
+          const found = findUnit(unit.children, id);
           if (found) return found;
         }
       }
       return undefined;
     };
 
-    const parentName = parentId ? findUnitName(tree, parentId) : undefined;
-    setCreateDialogParent({ id: parentId, name: parentName });
+    const parentUnit = parentId ? findUnit(tree, parentId) : undefined;
+    setCreateDialogParent({ 
+      id: parentId, 
+      name: parentUnit?.name,
+      level_key: parentUnit?.level_key,
+      level_order: parentUnit ? levels.find(l => l.key === parentUnit.level_key)?.level_order : undefined
+    });
     setShowCreateDialog(true);
   };
 
@@ -141,7 +160,8 @@ export default function OrganizationPage() {
       const authHeader = getAuthHeader();
       if (!authHeader) throw new Error("Not authenticated");
 
-      console.log("[Organization] Creating unit:", data);
+      console.log("[Organization] ===== Creating unit ===== ");
+      console.log("[Organization] Unit data:", JSON.stringify(data, null, 2));
       console.log("[Organization] API URL:", `${API_BASE_URL}/org/units`);
 
       const response = await fetch(`${API_BASE_URL}/org/units`, {
@@ -157,11 +177,11 @@ export default function OrganizationPage() {
       console.log("[Organization] Response ok:", response.ok);
 
       const result = await response.json();
-      console.log("[Organization] Response data:", result);
+      console.log("[Organization] Response data:", JSON.stringify(result, null, 2));
 
       if (!response.ok) {
         const errorMessage = result.message || result.error || "Failed to create unit";
-        console.error("[Organization] Error response:", result);
+        console.error("[Organization] ❌ Error response:", result);
         throw new Error(errorMessage);
       }
 
@@ -169,17 +189,48 @@ export default function OrganizationPage() {
         throw new Error(result.message || "Failed to create unit");
       }
 
-      // Small delay to ensure backend has processed the creation
-      setTimeout(() => {
-        refreshTree();
-      }, 300);
-      if (result.data?.id) {
-        setSelectedUnitId(result.data.id);
+      console.log("[Organization] ✅ Unit created successfully:", result.data);
+      
+      // Close dialog first
+      setShowCreateDialog(false);
+      setCreateDialogParent(null);
+
+      // Show success message
+      alert(`✅ Unit "${data.name}" created successfully!`);
+      
+      // Force tree refresh - wait a moment for backend to commit
+      console.log("[Organization] ⏳ Waiting for backend to commit...");
+      await new Promise(resolve => setTimeout(resolve, 800)); // Wait 800ms for backend
+      
+      console.log("[Organization] 🔄 Calling refreshTree...");
+      try {
+        await refreshTree();
+        console.log("[Organization] ✅ Tree refresh call completed");
+        
+        // Wait for state to update and component to re-render
+        await new Promise(resolve => setTimeout(resolve, 300));
+        
+        // Select the newly created unit after tree is refreshed
+        if (result.data?.id) {
+          setSelectedUnitId(result.data.id);
+          console.log("[Organization] ✅ Selected new unit ID:", result.data.id);
+          
+          // Force another refresh after selection to ensure tree is fully updated
+          await new Promise(resolve => setTimeout(resolve, 200));
+          await refreshTree();
+          console.log("[Organization] ✅ Final tree refresh completed");
+        }
+      } catch (refreshError) {
+        console.error("[Organization] ❌ Error refreshing tree:", refreshError);
+        // Try one more time
+        setTimeout(async () => {
+          await refreshTree();
+        }, 1000);
       }
-      alert("Unit created successfully");
     } catch (err: any) {
-      console.error("Error creating unit:", err);
-      alert(`Error: ${err.message || "Unknown error occurred"}`);
+      console.error("[Organization] ❌ Error creating unit:", err);
+      alert(`❌ Error: ${err.message || "Unknown error occurred"}`);
+      throw err; // Re-throw to prevent dialog from closing on error
     }
   };
 
@@ -213,6 +264,19 @@ export default function OrganizationPage() {
                     Setup Levels
                   </Button>
                 )}
+                <Button 
+                  onClick={async () => {
+                    console.log("[Organization] 🔄 Manual refresh triggered");
+                    setSelectedUnitId(null);
+                    await refreshTree();
+                    console.log("[Organization] ✅ Manual refresh completed");
+                  }} 
+                  className="h-9 px-3 text-sm" 
+                  variant="outline"
+                  title="Refresh tree"
+                >
+                  🔄
+                </Button>
                 <Button onClick={handleAddRoot} className="h-9 px-3 text-sm" disabled={levels.length === 0}>
                   <Plus className="w-4 h-4 mr-2 rtl:mr-0 rtl:ml-2" />
                   Add Root
@@ -251,6 +315,7 @@ export default function OrganizationPage() {
                     </div>
                   ) : (
                     <OrgTree
+                      key={`tree-${tree.length}-${tree.map(u => u.id).join('-')}`}
                       treeData={tree}
                       selectedUnitId={selectedUnitId}
                       onSelect={setSelectedUnitId}
@@ -276,20 +341,20 @@ export default function OrganizationPage() {
       </div>
 
       {/* Create Unit Dialog */}
-      {showCreateDialog && (
-        <CreateUnitDialog
-          open={showCreateDialog}
-          onOpenChange={setShowCreateDialog}
-          levels={levels}
-          parentId={createDialogParent?.id ?? undefined}
-          parentName={createDialogParent?.name}
-          onSuccess={async (data) => {
-            await createUnit(data);
-            setShowCreateDialog(false);
+      <CreateUnitDialog
+        open={showCreateDialog}
+        onOpenChange={(open) => {
+          setShowCreateDialog(open);
+          if (!open) {
             setCreateDialogParent(null);
-          }}
-        />
-      )}
+          }
+        }}
+        levels={levels}
+        parentId={createDialogParent?.id ?? undefined}
+        parentName={createDialogParent?.name}
+        parentLevelOrder={createDialogParent?.level_order}
+        onSuccess={createUnit}
+      />
     </PageShell>
   );
 }

@@ -1,12 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useDirection } from "@/contexts/DirectionContext";
 import { useTranslations } from 'next-intl';
+import { EditableFields, EditableField } from "@/components/EditableFields";
+import { EditableTable } from "@/components/EditableTable";
+import { LookupSelect } from "@/components/LookupSelect";
+import { useEmployeeSave, EmployeeChanges } from "@/hooks/useEmployeeSave";
 
 interface Employee {
   id: string;
@@ -76,16 +80,241 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
   const tCommon = useTranslations('common');
   const [isEditing, setIsEditing] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
+  const [employeeData, setEmployeeData] = useState<Record<string, any>>({});
+  
+  // Track changes for each tab
+  const [masterChanges, setMasterChanges] = useState<Record<string, any>>({});
+  const [taxChanges, setTaxChanges] = useState<Record<string, any>>({});
+  const [contractsChanges, setContractsChanges] = useState<{ created?: any[]; updated?: any[]; deleted?: (number | string)[] }>({});
+  const [attendanceChanges, setAttendanceChanges] = useState<{ created?: any[]; updated?: any[]; deleted?: (number | string)[] }>({});
+  const [bankDetailsChanges, setBankDetailsChanges] = useState<{ created?: any[]; updated?: any[]; deleted?: (number | string)[] }>({});
+  const [pensionChanges, setPensionChanges] = useState<{ created?: any[]; updated?: any[]; deleted?: (number | string)[] }>({});
+  const [payItemsChanges, setPayItemsChanges] = useState<{ created?: any[]; updated?: any[]; deleted?: (number | string)[] }>({});
+  
+  // Use the save hook
+  const { saveAll, isSaving, saveError, clearError } = useEmployeeSave(employee?.id);
 
-  const handleSave = () => {
-    setIsEditing(false);
-    if (onSave) {
-      onSave();
+  // Initialize employeeData from employeeDetail
+  useEffect(() => {
+    if (employeeDetail) {
+      const data: Record<string, any> = {};
+      // Copy all primitive values and dates from employeeDetail
+      Object.keys(employeeDetail).forEach(key => {
+        const value = (employeeDetail as any)[key];
+        if (value !== null && value !== undefined && 
+            (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' || 
+             value instanceof Date || (typeof value === 'object' && !Array.isArray(value) && !value.length))) {
+          data[key] = value;
+        }
+      });
+      setEmployeeData(data);
+    }
+  }, [employeeDetail]);
+
+  const handleFieldChange = (fieldId: string, value: any) => {
+    setEmployeeData(prev => ({ ...prev, [fieldId]: value }));
+    // Track master changes
+    setMasterChanges(prev => ({ ...prev, [fieldId]: value }));
+  };
+
+  const handleTaxFieldChange = (fieldId: string, value: any) => {
+    setTaxChanges(prev => ({ ...prev, [fieldId]: value }));
+  };
+
+  // Helper: Track changes for detail tables
+  const trackTableChanges = useCallback((
+    tableName: 'contracts' | 'attendance' | 'bank_details' | 'pension' | 'pay_items',
+    originalData: any[],
+    currentData: any[],
+    getRowId: (row: any, idx: number) => string | number,
+  ) => {
+    const originalIds = new Set(originalData.map((row, idx) => getRowId(row, idx)));
+    const currentIds = new Set(currentData.map((row, idx) => getRowId(row, idx)));
+    
+    // Find deleted rows (in original but not in current)
+    const deleted: (string | number)[] = [];
+    originalData.forEach((row, idx) => {
+      const id = getRowId(row, idx);
+      if (!currentIds.has(id)) {
+        // Get the actual ID from the row (contract_id, attendance_id, etc.)
+        const actualId = row.contract_id || row.attendance_id || row.bank_detail_id || row.emp_pension_id || row.pay_item_id || id;
+        deleted.push(actualId);
+      }
+    });
+    
+    // Find created and updated rows
+    const created: any[] = [];
+    const updated: any[] = [];
+    
+    currentData.forEach((row, idx) => {
+      const id = getRowId(row, idx);
+      const isNew = !originalIds.has(id) || 
+                    id === null || 
+                    id === undefined || 
+                    String(id).startsWith('contract-') || 
+                    String(id).startsWith('attendance-') || 
+                    String(id).startsWith('bank-') || 
+                    String(id).startsWith('pension-') || 
+                    String(id).startsWith('payitem-');
+      
+      if (isNew) {
+        created.push(row);
+      } else {
+        // Check if row was modified
+        const originalRow = originalData.find((r, i) => getRowId(r, i) === id);
+        if (originalRow) {
+          const hasChanges = JSON.stringify(originalRow) !== JSON.stringify(row);
+          if (hasChanges) {
+            updated.push(row);
+          }
+        }
+      }
+    });
+    
+    // Update the appropriate state
+    const changes = {
+      created: created.length > 0 ? created : undefined,
+      updated: updated.length > 0 ? updated : undefined,
+      deleted: deleted.length > 0 ? deleted : undefined,
+    };
+    
+    switch (tableName) {
+      case 'contracts':
+        setContractsChanges(changes);
+        break;
+      case 'attendance':
+        setAttendanceChanges(changes);
+        break;
+      case 'bank_details':
+        setBankDetailsChanges(changes);
+        break;
+      case 'pension':
+        setPensionChanges(changes);
+        break;
+      case 'pay_items':
+        setPayItemsChanges(changes);
+        break;
+    }
+  }, []);
+
+  const handleSave = async () => {
+    if (!employee?.id) {
+      console.error('Cannot save: employee ID is missing');
+      return;
+    }
+
+    try {
+      // Collect all changes
+      const allChanges: EmployeeChanges = {};
+      
+      // Master changes (from Overview and Personal tabs)
+      if (Object.keys(masterChanges).length > 0) {
+        allChanges.master = masterChanges;
+      }
+      
+      // Tax changes
+      if (Object.keys(taxChanges).length > 0) {
+        allChanges.tax = taxChanges;
+      }
+      
+      // Detail table changes
+      if (Object.keys(contractsChanges).length > 0 && 
+          (contractsChanges.created?.length || contractsChanges.updated?.length || contractsChanges.deleted?.length)) {
+        allChanges.contracts = contractsChanges;
+      }
+      
+      if (Object.keys(attendanceChanges).length > 0 && 
+          (attendanceChanges.created?.length || attendanceChanges.updated?.length || attendanceChanges.deleted?.length)) {
+        allChanges.attendance = attendanceChanges;
+      }
+      
+      if (Object.keys(bankDetailsChanges).length > 0 && 
+          (bankDetailsChanges.created?.length || bankDetailsChanges.updated?.length || bankDetailsChanges.deleted?.length)) {
+        allChanges.bank_details = bankDetailsChanges;
+      }
+      
+      if (Object.keys(pensionChanges).length > 0 && 
+          (pensionChanges.created?.length || pensionChanges.updated?.length || pensionChanges.deleted?.length)) {
+        allChanges.pension = pensionChanges;
+      }
+      
+      if (Object.keys(payItemsChanges).length > 0 && 
+          (payItemsChanges.created?.length || payItemsChanges.updated?.length || payItemsChanges.deleted?.length)) {
+        allChanges.pay_items = payItemsChanges;
+      }
+
+      // Check if there are any changes
+      if (Object.keys(allChanges).length === 0) {
+        console.log('[EmployeeDetail] No changes to save');
+        setIsEditing(false);
+        return;
+      }
+
+      console.log('[EmployeeDetail] Saving changes:', allChanges);
+      console.log('[EmployeeDetail] Master changes:', masterChanges);
+      console.log('[EmployeeDetail] Tax changes:', taxChanges);
+      console.log('[EmployeeDetail] Contracts changes:', contractsChanges);
+      console.log('[EmployeeDetail] Attendance changes:', attendanceChanges);
+      console.log('[EmployeeDetail] Bank details changes:', bankDetailsChanges);
+      console.log('[EmployeeDetail] Pension changes:', pensionChanges);
+      console.log('[EmployeeDetail] Pay items changes:', payItemsChanges);
+
+      // Save all changes in a transaction
+      const result = await saveAll(allChanges);
+
+      if (result.success) {
+        // Clear all change tracking
+        setMasterChanges({});
+        setTaxChanges({});
+        setContractsChanges({});
+        setAttendanceChanges({});
+        setBankDetailsChanges({});
+        setPensionChanges({});
+        setPayItemsChanges({});
+        
+        setIsEditing(false);
+        
+        // Refresh employee data
+        if (onSave) {
+          onSave();
+        }
+      } else {
+        // Error is already set in the hook
+        console.error('[EmployeeDetail] Save failed:', result.error);
+        if (result.operationLog) {
+          console.error('[EmployeeDetail] Operation log:', result.operationLog);
+        }
+      }
+    } catch (error) {
+      console.error('[EmployeeDetail] Error saving employee:', error);
     }
   };
 
   const handleCancel = () => {
     setIsEditing(false);
+    // Clear all change tracking
+    setMasterChanges({});
+    setTaxChanges({});
+    setContractsChanges({});
+    setAttendanceChanges({});
+    setBankDetailsChanges({});
+    setPensionChanges({});
+    setPayItemsChanges({});
+    clearError();
+    
+    // Reset employeeData from employeeDetail
+    if (employeeDetail) {
+      const data: Record<string, any> = {};
+      Object.keys(employeeDetail).forEach(key => {
+        const value = (employeeDetail as any)[key];
+        if (value !== null && value !== undefined && 
+            (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' || 
+             value instanceof Date || (typeof value === 'object' && !Array.isArray(value) && !value.length))) {
+          data[key] = value;
+        }
+      });
+      setEmployeeData(data);
+    }
   };
 
   if (!employee) {
@@ -132,14 +361,16 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                 <>
                   <Button
                     onClick={handleSave}
-                    className="bg-green-600 hover:bg-green-700 text-white h-8 px-3 text-xs"
+                    disabled={isSaving}
+                    className="bg-green-600 hover:bg-green-700 text-white h-8 px-3 text-xs disabled:opacity-50"
                   >
-                    {tCommon('save')}
+                    {isSaving ? tCommon('saving') || 'שומר...' : tCommon('save')}
                   </Button>
                   <Button
                     onClick={handleCancel}
                     variant="outline"
-                    className="h-8 px-3 text-xs"
+                    disabled={isSaving}
+                    className="h-8 px-3 text-xs disabled:opacity-50"
                   >
                     {tCommon('cancel')}
                   </Button>
@@ -202,6 +433,21 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
               )}
             </div>
           </div>
+          {/* Error Display */}
+          {saveError && (
+            <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-md">
+              <div className="flex items-start gap-2">
+                <span className="text-red-600 font-semibold">שגיאה:</span>
+                <p className="text-sm text-red-700 flex-1">{saveError}</p>
+                <button
+                  onClick={clearError}
+                  className="text-red-600 hover:text-red-800 text-xs"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Tabs - Compact */}
@@ -212,102 +458,171 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
             <TabsTrigger value="employment" className="px-3 py-1 text-xs">{t('tabs.employment')}</TabsTrigger>
             <TabsTrigger value="payroll" className="px-3 py-1 text-xs">{t('tabs.payroll')}</TabsTrigger>
             <TabsTrigger value="time" className="px-3 py-1 text-xs">{t('tabs.timeAttendance')}</TabsTrigger>
-            <TabsTrigger value="benefits" className="px-3 py-1 text-xs">{t('tabs.benefits')}</TabsTrigger>
-            <TabsTrigger value="documents" className="px-3 py-1 text-xs">{t('tabs.documents')}</TabsTrigger>
+            <TabsTrigger value="tax" className="px-3 py-1 text-xs">מיסים</TabsTrigger>
+            <TabsTrigger value="pension" className="px-3 py-1 text-xs">פנסיה</TabsTrigger>
+            <TabsTrigger value="payitems" className="px-3 py-1 text-xs">פרטי תשלום</TabsTrigger>
           </TabsList>
 
-          {/* Overview Tab - Compact Grid */}
+          {/* Overview Tab - All Employee Fields */}
           <TabsContent value="overview" className="space-y-3">
-            <div className="grid grid-cols-3 gap-3">
-              <div className="p-3 border border-gray-200 rounded-lg">
-                <p className="text-xs text-text-muted mb-1">{t('fields.employeeId')}</p>
-                <p className="text-sm font-medium text-text-main">{employee.id}</p>
-              </div>
-              <div className="p-3 border border-gray-200 rounded-lg">
-                <p className="text-xs text-text-muted mb-1">{t('email')}</p>
-                <p className="text-sm font-medium text-text-main truncate">{employee.email}</p>
-              </div>
-              <div className="p-3 border border-gray-200 rounded-lg">
-                <p className="text-xs text-text-muted mb-1">{t('department')}</p>
-                <p className="text-sm font-medium text-text-main">{employee.department}</p>
-              </div>
-              <div className="p-3 border border-gray-200 rounded-lg">
-                <p className="text-xs text-text-muted mb-1">{t('position')}</p>
-                <p className="text-sm font-medium text-text-main">{employee.position}</p>
-              </div>
-              <div className="p-3 border border-gray-200 rounded-lg">
-                <p className="text-xs text-text-muted mb-1">{t('status')}</p>
-                <p className="text-sm font-medium text-text-main">{employee.status}</p>
-              </div>
-              <div className="p-3 border border-gray-200 rounded-lg">
-                <p className="text-xs text-text-muted mb-1">{t('employmentType')}</p>
-                <p className="text-sm font-medium text-text-main">{employee.employmentType}</p>
-              </div>
-            </div>
+            {(() => {
+              // Define field mappings with labels and types - ordered to minimize gaps
+              const fieldDefinitions: Record<string, { label: string; type?: EditableField['type']; span?: number; lookupKey?: string }> = {
+                employee_id: { label: 'מזהה עובד', type: 'text', span: 1 },
+                employee_code: { label: 'קוד עובד', type: 'text', span: 1 },
+                department_number: { label: 'מספר מחלקה', type: 'lookup', span: 1, lookupKey: 'department_number' },
+                position: { label: 'תפקיד', type: 'text', span: 1 },
+                job_title: { label: 'כותרת תפקיד', type: 'text', span: 1 },
+                status: { label: 'סטטוס', type: 'text', span: 1 },
+                employment_status: { label: 'סטטוס העסקה', type: 'lookup', span: 1, lookupKey: 'employment_status' },
+                hire_date: { label: 'תאריך העסקה', type: 'date', span: 1 },
+                is_active: { label: 'פעיל', type: 'select', span: 1 },
+                site_number: { label: 'מספר אתר', type: 'lookup', span: 1, lookupKey: 'site_number' },
+                employment_percent: { label: 'אחוז העסקה', type: 'number', span: 1 },
+                created_at: { label: 'תאריך יצירה', type: 'date', span: 1 },
+                updated_at: { label: 'תאריך עדכון', type: 'date', span: 1 },
+              };
+
+              // Get all fields from employeeData, excluding client_id, personal fields (shown in Personal tab), and related data
+              const excludedFields = [
+                'client_id', 'id', 'bank_details', 'pay_items', 'pension_profile', 'tax_profile', 
+                'attendance', 'contracts', 'leave_balances',
+                'first_name', 'last_name', 'full_name', 'email', 'phone', 'cell_phone_number', 
+                'tz_id', 'national_id', 'gender', 'date_of_birth', 'address_line1', 'address_line2', 'city_code', 'zip_code', 'termination_date',
+                'department_id' // Exclude department_id - we only show department_number with lookup
+              ];
+              
+              // Get all available fields in the defined order first, then add any other fields
+              const orderedFields: EditableField[] = [];
+              const otherFields: EditableField[] = [];
+              
+              // First, add all defined fields (even if not in employeeData)
+              const order = Object.keys(fieldDefinitions);
+              order.forEach(key => {
+                if (!excludedFields.includes(key)) {
+                  const def = fieldDefinitions[key];
+                  const value = employeeData.hasOwnProperty(key) ? employeeData[key] : null;
+                  
+                  const field: EditableField = {
+                    id: key,
+                    label: def.label,
+                    type: def.type,
+                    value: value,
+                    defaultValue: value,
+                    span: def.span || 1,
+                    // Special handling for boolean fields
+                    ...(def.type === 'select' && key === 'is_active' ? {
+                      options: [
+                        { value: 'true', label: 'פעיל' },
+                        { value: 'false', label: 'לא פעיל' },
+                      ],
+                    } : {}),
+                    // Add lookupKey if defined
+                    ...(def.lookupKey ? { lookupKey: def.lookupKey } : {}),
+                  };
+                  
+                  orderedFields.push(field);
+                }
+              });
+              
+              // Then, add any other fields from employeeData that are not in fieldDefinitions
+              Object.keys(employeeData).forEach(key => {
+                if (!excludedFields.includes(key) && !fieldDefinitions[key]) {
+                  const value = employeeData[key];
+                  
+                  const field: EditableField = {
+                    id: key,
+                    label: key, // Use key as label if not defined
+                    type: 'text',
+                    value: value,
+                    defaultValue: value,
+                    span: 1,
+                  };
+                  
+                  otherFields.push(field);
+                }
+              });
+              
+              // Sort other fields alphabetically
+              otherFields.sort((a, b) => a.id.localeCompare(b.id));
+              
+              const fields = [...orderedFields, ...otherFields];
+
+              return (
+                <EditableFields
+                  fields={fields}
+                  data={employeeData}
+                  isEditing={isEditing}
+                  onChange={handleFieldChange}
+                  columns={3}
+                />
+              );
+            })()}
           </TabsContent>
 
-          {/* Personal Tab - Compact Grid */}
+          {/* Personal Tab - Personal Information Only */}
           <TabsContent value="personal" className="space-y-3">
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-text-muted mb-1">{t('fields.firstName')}</label>
-                {isEditing ? (
-                  <Input defaultValue={employee.name.split(" ")[0]} className="h-8 text-sm" />
-                ) : (
-                  <p className="text-sm text-text-main py-1.5">{employee.name.split(" ")[0]}</p>
-                )}
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-text-muted mb-1">{t('fields.lastName')}</label>
-                {isEditing ? (
-                  <Input defaultValue={employee.name.split(" ")[1] || ""} className="h-8 text-sm" />
-                ) : (
-                  <p className="text-sm text-text-main py-1.5">
-                    {employee.name.split(" ").slice(1).join(" ") || "N/A"}
-                  </p>
-                )}
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-text-muted mb-1">{t('email')}</label>
-                {isEditing ? (
-                  <Input type="email" defaultValue={employee.email} className="h-8 text-sm" />
-                ) : (
-                  <p className="text-sm text-text-main py-1.5 truncate">{employee.email}</p>
-                )}
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-text-muted mb-1">{t('phone')}</label>
-                {isEditing ? (
-                  <Input type="tel" defaultValue={employeeDetail?.phone || ""} className="h-8 text-sm" />
-                ) : (
-                  <p className="text-sm text-text-main py-1.5">{employeeDetail?.phone || "N/A"}</p>
-                )}
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-text-muted mb-1">{t('fields.dateOfBirth')}</label>
-                {isEditing ? (
-                  <Input type="date" defaultValue="1990-01-15" className="h-8 text-sm" />
-                ) : (
-                  <p className="text-sm text-text-main py-1.5">January 15, 1990</p>
-                )}
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-text-muted mb-1">{t('country')}</label>
-                {isEditing ? (
-                  <Input defaultValue={employee.country} className="h-8 text-sm" />
-                ) : (
-                  <p className="text-sm text-text-main py-1.5">{employee.country}</p>
-                )}
-              </div>
-              <div className="col-span-3">
-                <label className="block text-xs font-medium text-text-muted mb-1">{t('fields.address')}</label>
-                {isEditing ? (
-                  <Input defaultValue="123 Main Street, City, State 12345" className="h-8 text-sm" />
-                ) : (
-                  <p className="text-sm text-text-main py-1.5">123 Main Street, City, State 12345</p>
-                )}
-              </div>
-            </div>
+            {(() => {
+              // Personal fields only - no duplication with Overview
+              // Ordered to minimize gaps in the grid layout
+              const personalFieldDefinitions: Record<string, { label: string; type?: EditableField['type']; span?: number; lookupKey?: string }> = {
+                first_name: { label: 'שם פרטי', type: 'text', span: 1 },
+                last_name: { label: 'שם משפחה', type: 'text', span: 1 },
+                full_name: { label: 'שם מלא', type: 'text', span: 1 },
+                email: { label: 'אימייל', type: 'email', span: 1 },
+                phone: { label: 'טלפון', type: 'tel', span: 1 },
+                cell_phone_number: { label: 'מספר טלפון נייד', type: 'tel', span: 1 },
+                tz_id: { label: 'תעודת זהות', type: 'text', span: 1 },
+                national_id: { label: 'מספר זהות', type: 'text', span: 1 },
+                gender: { label: 'מין', type: 'text', span: 1 },
+                date_of_birth: { label: 'תאריך לידה', type: 'date', span: 1 },
+                address_line1: { label: 'כתובת שורה 1', type: 'text', span: 2 },
+                address_line2: { label: 'כתובת שורה 2', type: 'text', span: 2 },
+                city_code: { label: 'קוד עיר', type: 'text', span: 1 },
+                zip_code: { label: 'מיקוד', type: 'text', span: 1 },
+                termination_date: { label: 'תאריך סיום העסקה', type: 'date', span: 1 },
+              };
+
+              // Get all personal fields - arrange to minimize gaps
+              // Separate fields by span to avoid gaps
+              const singleSpanFields: EditableField[] = [];
+              const doubleSpanFields: EditableField[] = [];
+              
+              Object.keys(personalFieldDefinitions).forEach(key => {
+                const def = personalFieldDefinitions[key];
+                const value = employeeData.hasOwnProperty(key) ? employeeData[key] : null;
+                
+                const field: EditableField = {
+                  id: key,
+                  label: def.label,
+                  type: def.type || 'text',
+                  value: value,
+                  defaultValue: value,
+                  span: def.span || 1,
+                  // Add lookupKey if defined
+                  ...(def.lookupKey ? { lookupKey: def.lookupKey } : {}),
+                };
+                
+                if (def.span === 2) {
+                  doubleSpanFields.push(field);
+                } else {
+                  singleSpanFields.push(field);
+                }
+              });
+              
+              // Arrange fields: single span first, then double span (to minimize gaps)
+              const personalFields = [...singleSpanFields, ...doubleSpanFields];
+
+              return (
+                <EditableFields
+                  fields={personalFields}
+                  data={employeeData}
+                  isEditing={isEditing}
+                  onChange={handleFieldChange}
+                  columns={3}
+                />
+              );
+            })()}
           </TabsContent>
 
           {/* Employment Tab - Compact */}
@@ -383,291 +698,1102 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
             </div>
           </TabsContent>
 
-          {/* Payroll Tab - Compact */}
-          <TabsContent value="payroll" className="space-y-3">
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-text-muted mb-1">{t('fields.baseSalary')}</label>
-                {isEditing ? (
-                  <Input type="number" defaultValue="75000" className="h-8 text-sm" />
-                ) : (
-                  <p className="text-sm text-text-main py-1.5">$75,000.00</p>
-                )}
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-text-muted mb-1">{t('fields.payFrequency')}</label>
-                {isEditing ? (
-                  <Select defaultValue="Monthly" className="h-8 text-sm">
-                    <option>Monthly</option>
-                    <option>Bi-weekly</option>
-                    <option>Weekly</option>
-                  </Select>
-                ) : (
-                  <p className="text-sm text-text-main py-1.5">Monthly</p>
-                )}
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-text-muted mb-1">{t('fields.bankAccount')}</label>
-                {isEditing ? (
-                  <Input defaultValue="****1234" className="h-8 text-sm" />
-                ) : (
-                  <p className="text-sm text-text-main py-1.5">****1234</p>
-                )}
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-text-muted mb-1">{t('fields.taxId')}</label>
-                {isEditing ? (
-                  <Input defaultValue="TAX-12345" className="h-8 text-sm" />
-                ) : (
-                  <p className="text-sm text-text-main py-1.5">TAX-12345</p>
-                )}
-              </div>
+          {/* Payroll Tab - Contracts and Bank Details */}
+          <TabsContent value="payroll" className="space-y-4">
+            {/* Contracts */}
+            <div>
+              <h3 className="text-sm font-semibold text-text-main mb-2">חוזי העסקה</h3>
+              <EditableTable
+                columns={[
+                  {
+                    id: "start_date",
+                    label: "תאריך התחלה",
+                    editor: (value, row, onChange) => (
+                      <Input
+                        type="date"
+                        value={value ? (value instanceof Date ? value.toISOString().split('T')[0] : String(value).split('T')[0]) : ""}
+                        onChange={(e) => onChange(e.target.value)}
+                        className="min-h-10 h-auto text-sm"
+                      />
+                    ),
+                    render: (value) => value ? new Date(value).toLocaleDateString("he-IL") : "N/A",
+                  },
+                  {
+                    id: "end_date",
+                    label: "תאריך סיום",
+                    editor: (value, row, onChange) => (
+                      <Input
+                        type="date"
+                        value={value ? (value instanceof Date ? value.toISOString().split('T')[0] : String(value).split('T')[0]) : ""}
+                        onChange={(e) => onChange(e.target.value)}
+                        className="min-h-10 h-auto text-sm"
+                      />
+                    ),
+                    render: (value) => value ? new Date(value).toLocaleDateString("he-IL") : "N/A",
+                  },
+                  {
+                    id: "employment_type",
+                    label: "סוג העסקה",
+                    editor: (value, row, onChange) => (
+                      <LookupSelect
+                        lookupKey="employment_type"
+                        value={value}
+                        onChange={onChange}
+                        className="min-h-10 h-auto text-sm"
+                        allowEmpty={true}
+                        emptyLabel="ללא"
+                      />
+                    ),
+                    render: (value) => {
+                      const config = require("@/lib/lookups").LOOKUP_CONFIGS["employment_type"];
+                      const option = config?.options?.find((opt: any) => opt.value === value);
+                      return option ? option.label : value || "N/A";
+                    },
+                  },
+                  {
+                    id: "base_salary_monthly",
+                    label: "שכר בסיס חודשי",
+                    editor: (value, row, onChange) => (
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={value || ""}
+                        onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                        className="min-h-10 h-auto text-sm"
+                      />
+                    ),
+                    render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "N/A",
+                  },
+                  {
+                    id: "standard_hours_per_month",
+                    label: "שעות סטנדרטיות לחודש",
+                    editor: (value, row, onChange) => (
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={value || ""}
+                        onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                        className="min-h-10 h-auto text-sm"
+                      />
+                    ),
+                    render: (value) => value ? `${Number(value).toFixed(2)} שעות` : "N/A",
+                  },
+                  {
+                    id: "hourly_rate",
+                    label: "שכר לשעה",
+                    editor: (value, row, onChange) => (
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={value || ""}
+                        onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                        className="min-h-10 h-auto text-sm"
+                      />
+                    ),
+                    render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "N/A",
+                  },
+                  {
+                    id: "job_percent",
+                    label: "אחוז משרה",
+                    editor: (value, row, onChange) => (
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={value || ""}
+                        onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                        className="min-h-10 h-auto text-sm"
+                      />
+                    ),
+                    render: (value) => value ? `${Number(value).toFixed(2)}%` : "N/A",
+                  },
+                  {
+                    id: "annual_vacation_days",
+                    label: "ימי חופשה שנתיים",
+                    editor: (value, row, onChange) => (
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={value || ""}
+                        onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                        className="min-h-10 h-auto text-sm"
+                      />
+                    ),
+                    render: (value) => value ? `${Number(value).toFixed(2)} ימים` : "N/A",
+                  },
+                  {
+                    id: "annual_sick_days",
+                    label: "ימי מחלה שנתיים",
+                    editor: (value, row, onChange) => (
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={value || ""}
+                        onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                        className="min-h-10 h-auto text-sm"
+                      />
+                    ),
+                    render: (value) => value ? `${Number(value).toFixed(2)} ימים` : "N/A",
+                  },
+                  {
+                    id: "annual_havraa_days",
+                    label: "ימי הבראה שנתיים",
+                    editor: (value, row, onChange) => (
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={value || ""}
+                        onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                        className="min-h-10 h-auto text-sm"
+                      />
+                    ),
+                    render: (value) => value ? `${Number(value).toFixed(2)} ימים` : "N/A",
+                  },
+                  {
+                    id: "comment",
+                    label: "הערות",
+                    editor: (value, row, onChange) => (
+                      <Input
+                        value={value || ""}
+                        onChange={(e) => onChange(e.target.value)}
+                        className="min-h-10 h-auto text-sm"
+                      />
+                    ),
+                    render: (value) => value || "N/A",
+                  },
+                ]}
+                data={employeeDetail?.contracts || []}
+                onAdd={async () => ({
+                  id: null,
+                  employee_id: employee?.id || employeeDetail?.id || "",
+                  start_date: null,
+                  end_date: null,
+                  employment_type: "",
+                  base_salary_monthly: null,
+                  standard_hours_per_month: null,
+                  hourly_rate: null,
+                  job_percent: null,
+                  annual_vacation_days: null,
+                  annual_sick_days: null,
+                  annual_havraa_days: null,
+                  comment: "",
+                })}
+                onUpdate={async (row, index) => {
+                  // TODO: Implement API call
+                  console.log("Updating contract:", row);
+                }}
+                onDelete={async (row, index) => {
+                  // TODO: Implement API call
+                  console.log("Deleting contract:", row);
+                }}
+                onSave={async (rows) => {
+                  console.log('[EmployeeDetail] Contracts onSave called with rows:', rows);
+                  console.log('[EmployeeDetail] Original contracts:', employeeDetail?.contracts || []);
+                  // Track changes for contracts
+                  trackTableChanges('contracts', employeeDetail?.contracts || [], rows, (row: any, idx: number) => row.contract_id || row.id || `contract-${idx}`);
+                  console.log('[EmployeeDetail] Contracts changes tracked');
+                }}
+                getRowId={(row, index) => row.contract_id || row.id || `contract-${index}`}
+                emptyMessage="אין חוזי העסקה"
+                addButtonLabel="הוסף חוזה"
+                canAdd={isEditing}
+                canEdit={isEditing}
+                canDelete={isEditing}
+              />
             </div>
-            <div className="mt-3">
-              <h3 className="text-sm font-semibold text-text-main mb-2">{t('fields.payItems')}</h3>
-              <div className="border border-gray-200 rounded-lg overflow-hidden">
-                {employeeDetail?.pay_items && employeeDetail.pay_items.length > 0 ? (
-                  <table className="w-full text-xs">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-3 py-2 text-left rtl:text-right text-xs font-medium text-text-muted uppercase">
-                          {t('fields.item')}
-                        </th>
-                        <th className="px-3 py-2 text-left rtl:text-right text-xs font-medium text-text-muted uppercase">
-                          {t('fields.type')}
-                        </th>
-                        <th className="px-3 py-2 text-left rtl:text-right text-xs font-medium text-text-muted uppercase">
-                          {t('fields.amount')}
-                        </th>
-                        <th className="px-3 py-2 text-left rtl:text-right text-xs font-medium text-text-muted uppercase">
-                          {t('status')}
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-200">
-                      {employeeDetail.pay_items.map((item: any) => (
-                        <tr key={item.id}>
-                          <td className="px-3 py-2 text-sm text-text-main">{item.item_name || "N/A"}</td>
-                          <td className="px-3 py-2 text-sm text-text-muted">{item.pay_item_type || "N/A"}</td>
-                          <td className="px-3 py-2 text-sm text-text-main">
-                            {item.amount !== null && item.amount !== undefined 
-                              ? `$${Number(item.amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                              : "N/A"}
-                          </td>
-                          <td className="px-3 py-2 text-sm">
-                            <span className={`px-2 py-0.5 rounded-full text-xs ${
-                              item.is_active ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-700"
-                            }`}>
-                              {item.is_active ? t('status.active') : t('status.inactive')}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                ) : (
-                  <div className="p-4 text-center text-sm text-text-muted">
-                    {t('emptyStates.noPayItems')}
-                  </div>
-                )}
-              </div>
-            </div>
-            
+
             {/* Bank Details */}
-            {employeeDetail?.bank_details && employeeDetail.bank_details.length > 0 && (
-              <div className="mt-3">
-                <h3 className="text-sm font-semibold text-text-main mb-2">{t('fields.bankDetails')}</h3>
-                <div className="border border-gray-200 rounded-lg overflow-hidden">
-                  <table className="w-full text-xs">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-3 py-2 text-left rtl:text-right text-xs font-medium text-text-muted uppercase">
-                          {t('fields.bankName')}
-                        </th>
-                        <th className="px-3 py-2 text-left rtl:text-right text-xs font-medium text-text-muted uppercase">
-                          {t('fields.accountNumber')}
-                        </th>
-                        <th className="px-3 py-2 text-left rtl:text-right text-xs font-medium text-text-muted uppercase">
-                          {t('fields.branchCode')}
-                        </th>
-                        <th className="px-3 py-2 text-left rtl:text-right text-xs font-medium text-text-muted uppercase">
-                          {t('fields.type')}
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-200">
-                      {employeeDetail.bank_details.map((bank: any) => (
-                        <tr key={bank.id}>
-                          <td className="px-3 py-2 text-sm text-text-main">{bank.bank_name || "N/A"}</td>
-                          <td className="px-3 py-2 text-sm text-text-main">{bank.account_number || "N/A"}</td>
-                          <td className="px-3 py-2 text-sm text-text-muted">{bank.branch_code || "N/A"}</td>
-                          <td className="px-3 py-2 text-sm text-text-muted">
-                            {bank.account_type || "N/A"}
-                            {bank.is_primary && (
-                              <span className="ml-2 px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-xs">{t('fields.primary')}</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-            
-            {/* Tax Profile */}
-            {employeeDetail?.tax_profile && (
-              <div className="mt-3">
-                <h3 className="text-sm font-semibold text-text-main mb-2">{t('fields.taxProfile')}</h3>
-                <div className="grid grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-text-muted mb-1">{t('fields.taxId')}</label>
-                    <p className="text-sm text-text-main py-1.5">{employeeDetail.tax_profile.tax_id || "N/A"}</p>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-text-muted mb-1">{t('fields.filingStatus')}</label>
-                    <p className="text-sm text-text-main py-1.5">{employeeDetail.tax_profile.filing_status || "N/A"}</p>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-text-muted mb-1">{t('fields.exemptions')}</label>
-                    <p className="text-sm text-text-main py-1.5">{employeeDetail.tax_profile.exemptions ?? "N/A"}</p>
-                  </div>
-                </div>
-              </div>
-            )}
-            
-            {/* Pension Profile */}
-            {employeeDetail?.pension_profile && (
-              <div className="mt-3">
-                <h3 className="text-sm font-semibold text-text-main mb-2">{t('fields.pensionProfile')}</h3>
-                <div className="grid grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-text-muted mb-1">{t('fields.provider')}</label>
-                    <p className="text-sm text-text-main py-1.5">{employeeDetail.pension_profile.pension_provider || "N/A"}</p>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-text-muted mb-1">{t('fields.pensionNumber')}</label>
-                    <p className="text-sm text-text-main py-1.5">{employeeDetail.pension_profile.pension_number || "N/A"}</p>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-text-muted mb-1">{t('fields.contributionRate')}</label>
-                    <p className="text-sm text-text-main py-1.5">
-                      {employeeDetail.pension_profile.contribution_rate !== null && employeeDetail.pension_profile.contribution_rate !== undefined
-                        ? `${Number(employeeDetail.pension_profile.contribution_rate)}%`
-                        : "N/A"}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
+            <div>
+              <h3 className="text-sm font-semibold text-text-main mb-2">פרטי בנק</h3>
+              <EditableTable
+                columns={[
+                  {
+                    id: "bank_code",
+                    label: "קוד בנק",
+                    editor: (value, row, onChange) => (
+                      <LookupSelect
+                        lookupKey="bank_code"
+                        value={value}
+                        onChange={onChange}
+                        className="min-h-10 h-auto text-sm"
+                        allowEmpty={true}
+                        emptyLabel="ללא"
+                      />
+                    ),
+                    render: (value) => value || "N/A",
+                  },
+                  {
+                    id: "branch_code",
+                    label: "קוד סניף",
+                    editor: (value, row, onChange) => (
+                      <LookupSelect
+                        lookupKey="branch_code"
+                        value={value}
+                        onChange={onChange}
+                        className="min-h-10 h-auto text-sm"
+                        allowEmpty={true}
+                        emptyLabel="ללא"
+                        filter={row.bank_code ? { bank_code: row.bank_code } : undefined}
+                      />
+                    ),
+                    render: (value) => value || "N/A",
+                  },
+                  {
+                    id: "account_number",
+                    label: "מספר חשבון",
+                    editor: (value, row, onChange) => (
+                      <Input
+                        value={value || ""}
+                        onChange={(e) => onChange(e.target.value)}
+                        className="min-h-10 h-auto text-sm"
+                      />
+                    ),
+                    render: (value) => value || "N/A",
+                  },
+                  {
+                    id: "account_name",
+                    label: "שם החשבון",
+                    editor: (value, row, onChange) => (
+                      <Input
+                        value={value || ""}
+                        onChange={(e) => onChange(e.target.value)}
+                        className="min-h-10 h-auto text-sm"
+                      />
+                    ),
+                    render: (value) => value || "N/A",
+                  },
+                ]}
+                data={employeeDetail?.bank_details || []}
+                onAdd={async () => ({
+                  id: null,
+                  employee_id: employee?.id || employeeDetail?.id || "",
+                  bank_code: "",
+                  branch_code: "",
+                  account_number: "",
+                  account_name: "",
+                })}
+                onUpdate={async (row, index) => {
+                  // TODO: Implement API call
+                  console.log("Updating bank detail:", row);
+                }}
+                onDelete={async (row, index) => {
+                  // TODO: Implement API call
+                  console.log("Deleting bank detail:", row);
+                }}
+                onSave={async (rows) => {
+                  console.log('[EmployeeDetail] Bank details onSave called with rows:', rows);
+                  // Track changes for bank details
+                  trackTableChanges('bank_details', employeeDetail?.bank_details || [], rows, (row: any, idx: number) => row.bank_detail_id || row.id || `bank-${idx}`);
+                  console.log('[EmployeeDetail] Bank details changes tracked');
+                }}
+                getRowId={(row, index) => row.id || `bank-${index}`}
+                emptyMessage="אין פרטי בנק"
+                addButtonLabel="הוסף פרטי בנק"
+                canAdd={isEditing}
+                canEdit={isEditing}
+                canDelete={isEditing}
+              />
+            </div>
           </TabsContent>
 
-          {/* Time & Attendance Tab - Compact */}
-          <TabsContent value="time" className="space-y-3">
-            {/* Attendance Records */}
-            {employeeDetail?.attendance && employeeDetail.attendance.length > 0 ? (
-              <div className="border border-gray-200 rounded-lg overflow-hidden">
-                <table className="w-full text-xs">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-3 py-2 text-left rtl:text-right text-xs font-medium text-text-muted uppercase">
-                        {t('fields.date')}
-                      </th>
-                      <th className="px-3 py-2 text-left rtl:text-right text-xs font-medium text-text-muted uppercase">
-                        {t('fields.checkIn')}
-                      </th>
-                      <th className="px-3 py-2 text-left rtl:text-right text-xs font-medium text-text-muted uppercase">
-                        {t('fields.checkOut')}
-                      </th>
-                      <th className="px-3 py-2 text-left rtl:text-right text-xs font-medium text-text-muted uppercase">
-                        {t('fields.hours')}
-                      </th>
-                      <th className="px-3 py-2 text-left rtl:text-right text-xs font-medium text-text-muted uppercase">
-                        {t('status')}
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200">
-                    {employeeDetail.attendance.map((record: any) => (
-                      <tr key={record.id}>
-                        <td className="px-3 py-2 text-sm text-text-main">
-                          {record.date ? new Date(record.date).toLocaleDateString() : "N/A"}
-                        </td>
-                        <td className="px-3 py-2 text-sm text-text-main">
-                          {record.check_in ? new Date(record.check_in).toLocaleTimeString() : "N/A"}
-                        </td>
-                        <td className="px-3 py-2 text-sm text-text-main">
-                          {record.check_out ? new Date(record.check_out).toLocaleTimeString() : "N/A"}
-                        </td>
-                        <td className="px-3 py-2 text-sm text-text-main">
-                          {record.hours_worked !== null && record.hours_worked !== undefined 
-                            ? `${Number(record.hours_worked).toFixed(2)}h`
-                            : "N/A"}
-                        </td>
-                        <td className="px-3 py-2 text-sm">
-                          <span className={`px-2 py-0.5 rounded-full text-xs ${
-                            record.status === "Present" ? "bg-green-100 text-green-700" :
-                            record.status === "Absent" ? "bg-red-100 text-red-700" :
-                            record.status === "Late" ? "bg-orange-100 text-orange-700" :
-                            "bg-gray-100 text-gray-700"
-                          }`}>
-                            {record.status === "Present" ? t('fields.present') :
-                             record.status === "Absent" ? t('fields.absent') :
-                             record.status === "Late" ? t('fields.late') :
-                             record.status || "N/A"}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div className="p-4 text-center text-sm text-text-muted border border-gray-200 rounded-lg">
-                {t('emptyStates.noAttendance')}
-              </div>
-            )}
-            
-            {/* Leave Balances */}
-            {employeeDetail?.leave_balances && employeeDetail.leave_balances.length > 0 && (
-              <div className="mt-3">
-                <h3 className="text-sm font-semibold text-text-main mb-2">{t('fields.leaveBalances')}</h3>
-                <div className="border border-gray-200 rounded-lg overflow-hidden">
-                  <table className="w-full text-xs">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-3 py-2 text-left rtl:text-right text-xs font-medium text-text-muted uppercase">
-                          {t('fields.leaveType')}
-                        </th>
-                        <th className="px-3 py-2 text-left rtl:text-right text-xs font-medium text-text-muted uppercase">
-                          {t('fields.year')}
-                        </th>
-                        <th className="px-3 py-2 text-left rtl:text-right text-xs font-medium text-text-muted uppercase">
-                          {t('fields.balance')}
-                        </th>
-                        <th className="px-3 py-2 text-left rtl:text-right text-xs font-medium text-text-muted uppercase">
-                          {t('fields.used')}
-                        </th>
-                        <th className="px-3 py-2 text-left rtl:text-right text-xs font-medium text-text-muted uppercase">
-                          {t('fields.available')}
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-200">
-                      {employeeDetail.leave_balances.map((balance: any) => (
-                        <tr key={balance.id}>
-                          <td className="px-3 py-2 text-sm text-text-main">{balance.leave_type || "N/A"}</td>
-                          <td className="px-3 py-2 text-sm text-text-main">{balance.year || "N/A"}</td>
-                          <td className="px-3 py-2 text-sm text-text-main">{balance.balance ?? "N/A"}</td>
-                          <td className="px-3 py-2 text-sm text-text-main">{balance.used ?? "N/A"}</td>
-                          <td className="px-3 py-2 text-sm text-text-main">{balance.available ?? "N/A"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
+          {/* Time & Attendance Tab */}
+          <TabsContent value="time" className="space-y-4">
+            <EditableTable
+              columns={[
+                  {
+                    id: "period_id",
+                    label: "תקופה",
+                    editor: (value, row, onChange) => (
+                      <LookupSelect
+                        lookupKey="period_id"
+                        value={value}
+                        onChange={onChange}
+                        className="min-h-10 h-auto text-sm"
+                        allowEmpty={true}
+                        emptyLabel="ללא"
+                      />
+                    ),
+                    render: (value) => value || "N/A",
+                  },
+                {
+                  id: "work_days_actual",
+                  label: "ימי עבודה בפועל",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value ? `${Number(value).toFixed(2)} ימים` : "N/A",
+                },
+                {
+                  id: "work_hours_actual",
+                  label: "שעות עבודה בפועל",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value ? `${Number(value).toFixed(2)} שעות` : "N/A",
+                },
+                {
+                  id: "vacation_days_used",
+                  label: "ימי חופשה",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value ? `${Number(value).toFixed(2)} ימים` : "N/A",
+                },
+                {
+                  id: "sick_days_used",
+                  label: "ימי מחלה",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value ? `${Number(value).toFixed(2)} ימים` : "N/A",
+                },
+                {
+                  id: "miluim_days",
+                  label: "ימי מילואים",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value ? `${Number(value).toFixed(2)} ימים` : "N/A",
+                },
+                {
+                  id: "havraa_days_used",
+                  label: "ימי הבראה",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value ? `${Number(value).toFixed(2)} ימים` : "N/A",
+                },
+              ]}
+              data={employeeDetail?.attendance || []}
+              onAdd={async () => ({
+                id: null,
+                employee_id: employee?.id || employeeDetail?.id || "",
+                period_id: "",
+                work_days_actual: null,
+                work_hours_actual: null,
+                vacation_days_used: null,
+                sick_days_used: null,
+                miluim_days: null,
+                havraa_days_used: null,
+              })}
+              onUpdate={async (row, index) => {
+                // TODO: Implement API call
+                console.log("Updating attendance:", row);
+              }}
+              onDelete={async (row, index) => {
+                // TODO: Implement API call
+                console.log("Deleting attendance:", row);
+              }}
+              onSave={async (rows) => {
+                console.log('[EmployeeDetail] Attendance onSave called with rows:', rows);
+                // Track changes for attendance
+                trackTableChanges('attendance', employeeDetail?.attendance || [], rows, (row: any, idx: number) => row.attendance_id || row.id || `attendance-${idx}`);
+                console.log('[EmployeeDetail] Attendance changes tracked');
+              }}
+              getRowId={(row, index) => row.period_id || row.id || `attendance-${index}`}
+              emptyMessage="אין רשומות נוכחות"
+              addButtonLabel="הוסף רשומת נוכחות"
+              canAdd={isEditing}
+              canEdit={isEditing}
+              canDelete={isEditing}
+            />
+          </TabsContent>
+
+          {/* Tax Tab */}
+          <TabsContent value="tax" className="space-y-3">
+            {(() => {
+              const taxFieldDefinitions: Record<string, { label: string; type?: EditableField['type']; span?: number; lookupKey?: string }> = {
+                is_resident: { label: 'תושב', type: 'select', span: 1 },
+                company_car_benefit_group_id: { label: 'קבוצת הטבה רכב חברה', type: 'lookup', span: 1, lookupKey: 'company_car_benefit_group_id' },
+                additional_credit_points: { label: 'נקודות זיכוי נוספות', type: 'number', span: 1 },
+                special_tax_percent1: { label: 'אחוז מס מיוחד 1', type: 'number', span: 1 },
+                spt1_annual_threshhold: { label: 'סף שנתי מס מיוחד 1', type: 'number', span: 1 },
+                special_tax_percent2: { label: 'אחוז מס מיוחד 2', type: 'number', span: 1 },
+                spt2_annual_threshhold: { label: 'סף שנתי מס מיוחד 2', type: 'number', span: 1 },
+                is_tax_exempt: { label: 'פטור ממס', type: 'select', span: 1 },
+                tax_exempt_threshold: { label: 'סף פטור ממס', type: 'number', span: 1 },
+                is_bituach_leumi_special_pct: { label: 'אחוז ביטוח לאומי מיוחד', type: 'select', span: 1 },
+                special_bl_percent: { label: 'אחוז ביטוח לאומי מיוחד', type: 'number', span: 1 },
+                special_bl_threshhold: { label: 'סף ביטוח לאומי מיוחד', type: 'number', span: 1 },
+              };
+
+              const taxData = employeeDetail?.tax_profile || {};
+              // Show all defined fields, not just those that exist in taxData
+              // This ensures all fields are displayed even if tax_profile is empty or missing
+              const taxFields: EditableField[] = Object.keys(taxFieldDefinitions)
+                .map(key => {
+                  const def = taxFieldDefinitions[key];
+                  const value = taxData[key] ?? null; // Use null if not in taxData
+                  
+                  return {
+                    id: key,
+                    label: def.label,
+                    type: def.type || 'text',
+                    value: value, // This is the key - field.value should be used in read-only mode
+                    defaultValue: value,
+                    span: def.span || 1,
+                    ...(def.type === 'select' && (key === 'is_resident' || key === 'is_tax_exempt' || key === 'is_bituach_leumi_special_pct') ? {
+                      options: [
+                        { value: 'true', label: 'כן' },
+                        { value: 'false', label: 'לא' },
+                      ],
+                    } : {}),
+                    // Add lookupKey if defined
+                    ...(def.lookupKey ? { lookupKey: def.lookupKey } : {}),
+                  };
+                });
+
+              return (
+                <EditableFields
+                  fields={taxFields}
+                  data={taxData}
+                  isEditing={isEditing}
+                  onChange={handleTaxFieldChange}
+                  columns={3}
+                />
+              );
+            })()}
+          </TabsContent>
+
+          {/* Pension Tab */}
+          <TabsContent value="pension" className="space-y-4" key={`pension-${isEditing}`}>
+            <EditableTable
+              columns={[
+                {
+                  id: "pension_fund_name",
+                  label: "שם קרן פנסיה",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value || "N/A",
+                },
+                {
+                  id: "pension_policy_no",
+                  label: "מספר פוליסה",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value || "N/A",
+                },
+                {
+                  id: "pension_is_amount_based",
+                  label: "מבוסס סכום",
+                  editor: (value, row, onChange) => (
+                    <Select value={value ? "true" : "false"} onChange={(e) => onChange(e.target.value === "true")} className="h-8 text-sm">
+                      <option value="true">כן</option>
+                      <option value="false">לא</option>
+                    </Select>
+                  ),
+                  render: (value) => value ? "כן" : "לא",
+                },
+                {
+                  id: "employer_pension_pct",
+                  label: "אחוז פנסיה מעביד",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value ? `${Number(value).toFixed(2)}%` : "N/A",
+                },
+                {
+                  id: "employee_pension_pct",
+                  label: "אחוז פנסיה עובד",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value ? `${Number(value).toFixed(2)}%` : "N/A",
+                },
+                {
+                  id: "employer_severance_pct",
+                  label: "אחוז פיצויים מעביד",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value ? `${Number(value).toFixed(2)}%` : "N/A",
+                },
+                {
+                  id: "employer_disability_pct",
+                  label: "אחוז נכות מעביד",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value ? `${Number(value).toFixed(2)}%` : "N/A",
+                },
+                {
+                  id: "employee_disability_pct",
+                  label: "אחוז נכות עובד",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value ? `${Number(value).toFixed(2)}%` : "N/A",
+                },
+                {
+                  id: "pension_ceiling_monthly",
+                  label: "תקרה חודשית פנסיה",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "N/A",
+                },
+                {
+                  id: "employer_pension_amount",
+                  label: "סכום פנסיה מעביד",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "N/A",
+                },
+                {
+                  id: "employee_pension_amount",
+                  label: "סכום פנסיה עובד",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "N/A",
+                },
+                {
+                  id: "employer_severance_amount",
+                  label: "סכום פיצויים מעביד",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "N/A",
+                },
+                {
+                  id: "employer_disability_amount",
+                  label: "סכום נכות מעביד",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "N/A",
+                },
+                {
+                  id: "employee_disability_amount",
+                  label: "סכום נכות עובד",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "N/A",
+                },
+                {
+                  id: "kh_enabled",
+                  label: "קופת גמל מופעלת",
+                  editor: (value, row, onChange) => (
+                    <Select value={value ? "true" : "false"} onChange={(e) => onChange(e.target.value === "true")} className="h-8 text-sm">
+                      <option value="true">כן</option>
+                      <option value="false">לא</option>
+                    </Select>
+                  ),
+                  render: (value) => value ? "כן" : "לא",
+                },
+                {
+                  id: "kh_is_amount_based",
+                  label: "קופת גמל מבוססת סכום",
+                  editor: (value, row, onChange) => (
+                    <Select value={value ? "true" : "false"} onChange={(e) => onChange(e.target.value === "true")} className="h-8 text-sm">
+                      <option value="true">כן</option>
+                      <option value="false">לא</option>
+                    </Select>
+                  ),
+                  render: (value) => value ? "כן" : "לא",
+                },
+                {
+                  id: "kh_employer_pct",
+                  label: "אחוז קופת גמל מעביד",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value ? `${Number(value).toFixed(2)}%` : "N/A",
+                },
+                {
+                  id: "kh_employee_pct",
+                  label: "אחוז קופת גמל עובד",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value ? `${Number(value).toFixed(2)}%` : "N/A",
+                },
+                {
+                  id: "kh_ceiling_monthly",
+                  label: "תקרה חודשית קופת גמל",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "N/A",
+                },
+                {
+                  id: "kh_employer_amount",
+                  label: "סכום קופת גמל מעביד",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "N/A",
+                },
+                {
+                  id: "kh_employee_amount",
+                  label: "סכום קופת גמל עובד",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "N/A",
+                },
+              ]}
+              data={Array.isArray(employeeDetail?.pension_profile) ? employeeDetail.pension_profile : (employeeDetail?.pension_profile ? [employeeDetail.pension_profile] : [])}
+              onAdd={async () => ({
+                id: null,
+                employee_id: employee?.id || employeeDetail?.id || "",
+                pension_fund_name: "",
+                pension_policy_no: "",
+                pension_is_amount_based: false,
+                employer_pension_pct: null,
+                employee_pension_pct: null,
+                employer_severance_pct: null,
+                employer_disability_pct: null,
+                employee_disability_pct: null,
+                pension_ceiling_monthly: null,
+                employer_pension_amount: null,
+                employee_pension_amount: null,
+                employer_severance_amount: null,
+                employer_disability_amount: null,
+                employee_disability_amount: null,
+                kh_enabled: false,
+                kh_is_amount_based: false,
+                kh_employer_pct: null,
+                kh_employee_pct: null,
+                kh_ceiling_monthly: null,
+                kh_employer_amount: null,
+                kh_employee_amount: null,
+              })}
+              onUpdate={async (row, index) => {
+                if (!employee?.id && !employeeDetail?.id) return;
+                const employeeId = employee?.id || employeeDetail?.id;
+                const pensionId = row.emp_pension_id || row.id;
+                
+                try {
+                  const token = localStorage.getItem('token');
+                  if (!token) {
+                    console.error("No authentication token found");
+                    return;
+                  }
+
+                  // Remove id and emp_pension_id from update data (they shouldn't be updated)
+                  const { id, emp_pension_id, employee_id, ...updateData } = row;
+
+                  let response;
+                  if (!pensionId || pensionId === null) {
+                    // Create new record
+                    response = await fetch(`/api/employees/${employeeId}/pension`, {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`,
+                      },
+                      body: JSON.stringify(updateData),
+                    });
+                  } else {
+                    // Update existing record
+                    response = await fetch(`/api/employees/${employeeId}/pension/${pensionId}`, {
+                      method: 'PUT',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`,
+                      },
+                      body: JSON.stringify(updateData),
+                    });
+                  }
+
+                  if (!response.ok) {
+                    const error = await response.json();
+                    console.error("Error saving pension record:", error);
+                    throw new Error(error.message || 'Failed to save pension record');
+                  }
+
+                  const result = await response.json();
+                  console.log("Pension record saved:", result);
+                  
+                  // Refresh employee detail if onSave callback is provided
+                  if (onSave) {
+                    onSave();
+                  }
+                } catch (error: any) {
+                  console.error("Error saving pension record:", error);
+                  throw error;
+                }
+              }}
+              onDelete={async (row, index) => {
+                if (!employee?.id && !employeeDetail?.id) return;
+                const employeeId = employee?.id || employeeDetail?.id;
+                const pensionId = row.emp_pension_id || row.id;
+                
+                if (!pensionId) {
+                  console.error("Cannot delete pension record: missing pension ID");
+                  return;
+                }
+
+                if (!confirm("האם אתה בטוח שברצונך למחוק את רשומת הפנסיה?")) {
+                  return;
+                }
+
+                try {
+                  const token = localStorage.getItem('token');
+                  if (!token) {
+                    console.error("No authentication token found");
+                    return;
+                  }
+
+                  const response = await fetch(`/api/employees/${employeeId}/pension/${pensionId}`, {
+                    method: 'DELETE',
+                    headers: {
+                      'Authorization': `Bearer ${token}`,
+                    },
+                  });
+
+                  if (!response.ok) {
+                    const error = await response.json();
+                    console.error("Error deleting pension record:", error);
+                    throw new Error(error.message || 'Failed to delete pension record');
+                  }
+
+                  const result = await response.json();
+                  console.log("Pension record deleted:", result);
+                  
+                  // Refresh employee detail if onSave callback is provided
+                  if (onSave) {
+                    onSave();
+                  }
+                } catch (error: any) {
+                  console.error("Error deleting pension record:", error);
+                  throw error;
+                }
+              }}
+              onSave={async (rows) => {
+                console.log('[EmployeeDetail] Pension onSave called with rows:', rows);
+                // Track changes for pension
+                trackTableChanges('pension', employeeDetail?.pension_profile || [], rows, (row: any, idx: number) => row.emp_pension_id || row.id || `pension-${idx}`);
+                console.log('[EmployeeDetail] Pension changes tracked');
+              }}
+              getRowId={(row, index) => row.emp_pension_id || row.id || `pension-${index}`}
+              emptyMessage="אין רשומות פנסיה"
+              addButtonLabel="הוסף רשומת פנסיה"
+              canAdd={isEditing}
+              canEdit={isEditing}
+              canDelete={isEditing}
+            />
+          </TabsContent>
+
+          {/* Pay Items Tab */}
+          <TabsContent value="payitems" className="space-y-4">
+            <EditableTable
+              columns={[
+                {
+                  id: "item_code",
+                  label: "קוד פריט",
+                  editor: (value, row, onChange) => (
+                    <LookupSelect
+                      lookupKey="item_code"
+                      value={value}
+                      onChange={onChange}
+                      className="min-h-10 h-auto text-sm"
+                      allowEmpty={true}
+                      emptyLabel="ללא"
+                    />
+                  ),
+                  render: (value) => value || "N/A",
+                },
+                {
+                  id: "pay_item_name",
+                  label: "שם פריט תשלום",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value || "N/A",
+                },
+                {
+                  id: "is_hour_based",
+                  label: "מבוסס שעות",
+                  editor: (value, row, onChange) => (
+                    <Select value={value ? "true" : "false"} onChange={(e) => onChange(e.target.value === "true")} className="h-8 text-sm">
+                      <option value="true">כן</option>
+                      <option value="false">לא</option>
+                    </Select>
+                  ),
+                  render: (value) => value ? "כן" : "לא",
+                },
+                {
+                  id: "amount",
+                  label: "סכום",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "N/A",
+                },
+                {
+                  id: "quantity",
+                  label: "כמות",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value ? `${Number(value).toFixed(2)}` : "N/A",
+                },
+                {
+                  id: "rate",
+                  label: "תעריף",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "N/A",
+                },
+                {
+                  id: "pct",
+                  label: "אחוז",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value ? `${Number(value).toFixed(2)}%` : "N/A",
+                },
+                {
+                  id: "comments",
+                  label: "הערות",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      value={value || ""}
+                      onChange={(e) => onChange(e.target.value)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value || "N/A",
+                },
+                {
+                  id: "department_number",
+                  label: "מספר מחלקה",
+                  editor: (value, row, onChange) => (
+                    <LookupSelect
+                      lookupKey="department_number"
+                      value={value}
+                      onChange={onChange}
+                      className="min-h-10 h-auto text-sm"
+                      allowEmpty={true}
+                      emptyLabel="ללא"
+                    />
+                  ),
+                  render: (value) => value || "N/A",
+                },
+                {
+                  id: "effective_to",
+                  label: "תוקף עד",
+                  editor: (value, row, onChange) => (
+                    <Input
+                      type="date"
+                      value={value ? (value instanceof Date ? value.toISOString().split('T')[0] : String(value).split('T')[0]) : ""}
+                      onChange={(e) => onChange(e.target.value)}
+                      className="min-h-10 h-auto text-sm"
+                    />
+                  ),
+                  render: (value) => value ? new Date(value).toLocaleDateString("he-IL") : "N/A",
+                },
+              ]}
+              data={employeeDetail?.pay_items || []}
+              onAdd={async () => ({
+                id: null,
+                employee_id: employee?.id || employeeDetail?.id || "",
+                item_code: "",
+                pay_item_name: "",
+                is_hour_based: false,
+                amount: null,
+                quantity: null,
+                rate: null,
+                pct: null,
+                comments: "",
+                department_number: null,
+                effective_to: null,
+              })}
+              onUpdate={async (row, index) => {
+                // TODO: Implement API call
+                console.log("Updating pay item:", row);
+              }}
+              onDelete={async (row, index) => {
+                // TODO: Implement API call
+                console.log("Deleting pay item:", row);
+              }}
+              onSave={async (rows) => {
+                console.log('[EmployeeDetail] Pay items onSave called with rows:', rows);
+                // Track changes for pay items
+                trackTableChanges('pay_items', employeeDetail?.pay_items || [], rows, (row: any, idx: number) => row.pay_item_id || row.id || `payitem-${idx}`);
+                console.log('[EmployeeDetail] Pay items changes tracked');
+              }}
+              getRowId={(row, index) => row.pay_item_id || row.id || `payitem-${index}`}
+              emptyMessage="אין פריטי תשלום"
+              addButtonLabel="הוסף פריט תשלום"
+              canAdd={isEditing}
+              canEdit={isEditing}
+              canDelete={isEditing}
+            />
           </TabsContent>
 
           {/* Benefits Tab - Compact */}
@@ -715,7 +1841,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                           : ""}
                       </p>
                       <p className="text-xs text-text-muted mt-1">
-                        {t('status')}: <span className={`${
+                        {tCommon('status')}: <span className={`${
                           contract.status === "Active" ? "text-green-600" : "text-gray-600"
                         }`}>{contract.status || "N/A"}</span>
                       </p>

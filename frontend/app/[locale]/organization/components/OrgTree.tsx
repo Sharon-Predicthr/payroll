@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useDirection } from "@/contexts/DirectionContext";
 import { OrgUnit } from "../hooks/useOrgData";
@@ -43,6 +43,15 @@ function TreeNode({
   const hasChildren = unit.children && unit.children.length > 0;
   const isExpanded = expandedNodes.has(unit.id);
   const isSelected = selectedUnitId === unit.id;
+  
+  // Log if this is the phantom unit
+  if (unit.name === "פיתוח") {
+    console.error("[TreeNode] ⚠️ RENDERING PHANTOM UNIT 'פיתוח'!");
+    console.error("[TreeNode] Unit details:", unit);
+    console.error("[TreeNode] Unit ID:", unit.id);
+    console.error("[TreeNode] Parent ID:", unit.parent_id);
+    console.error("[TreeNode] Stack trace:", new Error().stack);
+  }
 
   const handleToggle = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -108,8 +117,17 @@ function TreeNode({
 
         {/* Unit Name */}
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium text-gray-900 truncate">{unit.name}</div>
-          <div className="text-xs text-gray-500 truncate">{unit.code}</div>
+          <div className="text-sm font-medium text-gray-900 truncate">
+            {unit.name}
+            {unit.name === "פיתוח" && (
+              <span className="ml-2 text-red-500 text-xs font-bold" title="⚠️ PHANTOM UNIT - Should not exist!">
+                ⚠️ PHANTOM
+              </span>
+            )}
+          </div>
+          <div className="text-xs text-gray-500 truncate">
+            {unit.code} {unit.name === "פיתוח" && `| ID:${unit.id} | Parent:${unit.parent_id}`}
+          </div>
         </div>
 
         {/* Actions Menu */}
@@ -205,6 +223,53 @@ export function OrgTree({
   onDelete,
 }: OrgTreeProps) {
   const [expandedNodes, setExpandedNodes] = useState<Set<number>>(new Set());
+  const [treeKey, setTreeKey] = useState(0); // Force re-render key
+  
+  // Log when treeData changes - log ALL units including children
+  useEffect(() => {
+    console.log("[OrgTree] 🔄 Tree data changed. Root units:", treeData.length);
+    console.log("[OrgTree] Tree data reference:", treeData);
+    console.log("[OrgTree] Tree data JSON:", JSON.stringify(treeData, null, 2));
+    
+    const flattenTree = (units: OrgUnit[]): OrgUnit[] => {
+      const result: OrgUnit[] = [];
+      units.forEach(unit => {
+        result.push(unit);
+        if (unit.children && unit.children.length > 0) {
+          result.push(...flattenTree(unit.children));
+        }
+      });
+      return result;
+    };
+    
+    const allUnits = flattenTree(treeData);
+    console.log("[OrgTree] 📋 ALL units being rendered:", allUnits.map(u => ({
+      id: u.id,
+      name: u.name,
+      code: u.code,
+      parent_id: u.parent_id,
+      level_key: u.level_key
+    })));
+    
+    // Check if "פיתוח" exists - check both exact match and includes
+    const pituachUnits = allUnits.filter(u => {
+      const name = u.name || '';
+      return name === "פיתוח" || name.includes("פיתוח") || name.trim() === "פיתוח";
+    });
+    
+    if (pituachUnits.length > 0) {
+      console.error("[OrgTree] ⚠️ WARNING: Found 'פיתוח' in tree data!");
+      console.error("[OrgTree] Pituach units found:", pituachUnits);
+      console.error("[OrgTree] Full tree data:", JSON.stringify(treeData, null, 2));
+      console.error("[OrgTree] All units JSON:", JSON.stringify(allUnits, null, 2));
+    } else {
+      console.log("[OrgTree] ✅ No 'פיתוח' found in tree data");
+      console.log("[OrgTree] All unit names:", allUnits.map(u => u.name));
+    }
+    
+    // Force re-render by updating key
+    setTreeKey(prev => prev + 1);
+  }, [treeData]);
 
   const handleToggleExpand = (id: number) => {
     const newExpanded = new Set(expandedNodes);
@@ -217,16 +282,16 @@ export function OrgTree({
   };
 
   return (
-    <div className="h-full overflow-y-auto">
+    <div className="h-full overflow-y-auto" key={`tree-container-${treeKey}`}>
       {treeData.length === 0 ? (
         <div className="p-4 text-center text-sm text-gray-500">
           No organization units found. Create your first unit to get started.
         </div>
       ) : (
-        <div className="p-2">
+        <div className="p-2" key={`tree-content-${treeKey}`}>
           {treeData.map((unit) => (
             <TreeNode
-              key={unit.id}
+              key={`unit-${unit.id}-${treeKey}`}
               unit={unit}
               level={0}
               selectedUnitId={selectedUnitId}

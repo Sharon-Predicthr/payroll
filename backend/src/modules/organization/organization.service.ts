@@ -505,6 +505,31 @@ export class OrganizationService extends BaseTenantService {
         `);
 
       this.logger.log(`[getChildren] Found ${result.recordset.length} children for parent ${parentId}`);
+      
+      // Log all children being returned
+      if (result.recordset.length > 0) {
+        this.logger.log(`[getChildren] Children for parent ${parentId}:`, result.recordset.map(r => ({
+          id: r.id,
+          name: r.name,
+          code: r.code,
+          parent_id: r.parent_id,
+          level_key: r.level_key
+        })));
+        
+        // Check for specific problematic unit
+        const pituachUnit = result.recordset.find(r => r.id === 5 || r.name === "פיתוח");
+        if (pituachUnit) {
+          this.logger.error(`[getChildren] ⚠️ FOUND UNIT ID:5 or 'פיתוח' in database query!`);
+          this.logger.error(`[getChildren] Unit details:`, {
+            id: pituachUnit.id,
+            name: pituachUnit.name,
+            code: pituachUnit.code,
+            parent_id: pituachUnit.parent_id,
+            level_key: pituachUnit.level_key,
+            tenant_id: pituachUnit.tenant_id
+          });
+        }
+      }
 
       const children = result.recordset.map(row => ({
         ...this.mapToUnit(row),
@@ -617,6 +642,27 @@ export class OrganizationService extends BaseTenantService {
           WHERE ou.tenant_id = @tenant_id
           ORDER BY CASE WHEN ou.parent_id IS NULL THEN 0 ELSE 1 END, ou.name ASC
         `);
+      
+      // Check specifically for unit ID 5
+      const unit5 = allUnitsResult.recordset.find(r => r.id === 5);
+      if (unit5) {
+        this.logger.error(`[getTree] ⚠️ FOUND UNIT ID:5 in database!`);
+        this.logger.error(`[getTree] Unit 5 details:`, {
+          id: unit5.id,
+          name: unit5.name,
+          code: unit5.code,
+          parent_id: unit5.parent_id,
+          level_key: unit5.level_key,
+          tenant_id: unit5.tenant_id,
+          is_active: unit5.is_active
+        });
+      } else {
+        this.logger.log(`[getTree] ✅ Unit ID:5 NOT found in database query results`);
+      }
+      
+      // Log all IDs to see what we have
+      const allIds = allUnitsResult.recordset.map(r => r.id).sort((a, b) => a - b);
+      this.logger.log(`[getTree] All unit IDs in database:`, allIds);
 
       this.logger.log(`[getTree] Query returned ${allUnitsResult.recordset.length} rows`);
       

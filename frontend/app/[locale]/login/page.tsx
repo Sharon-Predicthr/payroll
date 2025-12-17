@@ -94,18 +94,35 @@ export default function LoginPage() {
     }
   };
 
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50" dir={direction}>
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">טוען...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-bg-main" dir={direction}>
+    <div className="min-h-screen flex items-center justify-center bg-gray-50" dir={direction}>
       {/* Language Switcher - Top Right */}
       <div className="absolute top-4 right-4 rtl:right-auto rtl:left-4 z-10">
         <LanguageSwitcher />
       </div>
       
       <div className="w-full max-w-md p-8">
-        <div className="bg-card-bg rounded-xl shadow-sm border border-gray-200 p-8">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
           <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold text-text-main mb-2">PayLens</h1>
-            <p className="text-text-muted">{t('title')}</p>
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">PayLens</h1>
+            <p className="text-gray-600">{t('title')}</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-6">
@@ -122,7 +139,7 @@ export default function LoginPage() {
             )}
 
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-text-main mb-2">
+              <label htmlFor="email" className="block text-sm font-medium text-gray-900 mb-2">
                 {t('email')}
               </label>
               <Input
@@ -138,7 +155,7 @@ export default function LoginPage() {
             </div>
 
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-text-main mb-2">
+              <label htmlFor="password" className="block text-sm font-medium text-gray-900 mb-2">
                 {t('password')}
               </label>
               <Input
@@ -161,11 +178,11 @@ export default function LoginPage() {
                   onChange={(e) => setRememberMe(e.target.checked)}
                   disabled={isSubmitting}
                 />
-                <label htmlFor="remember" className="ml-2 text-sm text-text-muted cursor-pointer">
+                <label htmlFor="remember" className="ml-2 text-sm text-gray-600 cursor-pointer">
                   {t('rememberMe')}
                 </label>
               </div>
-              <a href="#" className="text-sm text-primary hover:underline">
+              <a href="#" className="text-sm text-blue-600 hover:underline">
                 {t('forgotPassword')}
               </a>
             </div>
