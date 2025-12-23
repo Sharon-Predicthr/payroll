@@ -212,7 +212,7 @@ export class PdfGeneratorHtmlService {
 <body>
   <div class="header">
     <h1>תלוש שכר – ${month} ${year}</h1>
-    <div class="company">${payslipData.company.name} | ח.פ. ${payslipData.company.registration_number}</div>
+    <div class="company">${payslipData.company.name || 'שם חברה לא זמין'}${payslipData.company.registration_number ? ` | ח.פ. ${payslipData.company.registration_number}` : ''}</div>
   </div>
 
   <div class="section">
@@ -381,16 +381,23 @@ export class PdfGeneratorHtmlService {
       
       const page = await browser.newPage();
       
+      // Increase timeout for page operations (default is 30 seconds, increase to 60)
+      page.setDefaultNavigationTimeout(60000);
+      page.setDefaultTimeout(60000);
+      
       // Generate HTML
       const html = this.generatePayslipHTML(payslipData);
       
       // Set content and wait for fonts/styles to load
+      // Use 'domcontentloaded' instead of 'networkidle0' to avoid timeout issues
+      // since we're using inline HTML with no external resources
       await page.setContent(html, {
-        waitUntil: 'networkidle0',
+        waitUntil: 'domcontentloaded',
+        timeout: 60000,
       });
       
       // Wait a bit for fonts to render properly (using setTimeout instead of waitForTimeout)
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => setTimeout(resolve, 1000));
       
       // Generate PDF with proper settings
       const pdfBuffer = await page.pdf({

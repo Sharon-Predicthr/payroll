@@ -221,7 +221,7 @@ export default function PayslipsListPage() {
                     className="h-8 px-2 text-xs"
                     onClick={(e) => {
                       e.stopPropagation();
-                      router.push(`/${locale}/payslip/${row.id}`);
+                      window.open(`/${locale}/payslip/${row.id}`, '_blank');
                     }}
                   >
                     צפה
@@ -230,7 +230,7 @@ export default function PayslipsListPage() {
               },
             ]}
             gridId="payslips"
-            onRowClick={(row) => router.push(`/${locale}/payslip/${row.id}`)}
+            onRowClick={(row) => window.open(`/${locale}/payslip/${row.id}`, '_blank')}
             emptyMessage="אין תלושי שכר להצגה"
           />
         )}

@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { getAuthHeader } from "@/lib/auth";
 import { useRouter } from "next/navigation";
 import { useLocale } from "next-intl";
+import { usePayrollPeriod } from "@/contexts/PayrollPeriodContext";
 
 const API_BASE_URL = "/api";
 
@@ -34,22 +35,19 @@ export function CreatePayslipsDialog({
 }: CreatePayslipsDialogProps) {
   const router = useRouter();
   const locale = useLocale();
+  const { selectedPeriod } = usePayrollPeriod();
   const [scope, setScope] = useState<PayslipScope>("selected");
   const [singleEmployeeId, setSingleEmployeeId] = useState("");
-  const [month, setMonth] = useState(new Date().getMonth() + 1);
-  const [year, setYear] = useState(new Date().getFullYear());
-  const [creating, setCreating] = useState(false);
-  const [progress, setProgress] = useState({ current: 0, total: 0 });
+  const [processing, setProcessing] = useState(false);
+  const [result, setResult] = useState<{ processed: number; failed: number; errors: string[] } | null>(null);
 
   // Reset form when dialog opens
   useEffect(() => {
     if (open) {
       setScope(selectedEmployees.length > 0 ? "selected" : "all");
       setSingleEmployeeId("");
-      setMonth(new Date().getMonth() + 1);
-      setYear(new Date().getFullYear());
-      setCreating(false);
-      setProgress({ current: 0, total: 0 });
+      setProcessing(false);
+      setResult(null);
     }
   }, [open, selectedEmployees.length]);
 
@@ -68,6 +66,11 @@ export function CreatePayslipsDialog({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    if (!selectedPeriod) {
+      alert("אנא בחר תקופת שכר");
+      return;
+    }
+
     const targetEmployees = getTargetEmployees();
     if (targetEmployees.length === 0) {
       alert("אנא בחר עובדים");
@@ -75,8 +78,8 @@ export function CreatePayslipsDialog({
     }
 
     try {
-      setCreating(true);
-      setProgress({ current: 0, total: targetEmployees.length });
+      setProcessing(true);
+      setResult(null);
 
       const authHeader = getAuthHeader();
       if (!authHeader) {
@@ -84,60 +87,52 @@ export function CreatePayslipsDialog({
         return;
       }
 
-      const createdPayslips: string[] = [];
-      const errors: string[] = [];
+      // Prepare request body based on scope
+      let requestBody: any = {
+        period_id: selectedPeriod.period_id,
+      };
 
-      for (let i = 0; i < targetEmployees.length; i++) {
-        const employee = targetEmployees[i];
-        setProgress({ current: i + 1, total: targetEmployees.length });
-
-        try {
-          const response = await fetch(`${API_BASE_URL}/payslips`, {
-            method: "POST",
-            headers: {
-              Authorization: authHeader,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              employee_id: employee.id,
-              month: month,
-              year: year,
-            }),
-          });
-
-          const result = await response.json();
-
-          if (!response.ok) {
-            throw new Error(result.message || "Failed to create payslip");
-          }
-
-          if (result.success && result.data?.id) {
-            createdPayslips.push(result.data.id);
-          }
-        } catch (err: any) {
-          errors.push(`${employee.name}: ${err.message}`);
-        }
+      if (scope === "single" && singleEmployeeId) {
+        requestBody.employee_id = singleEmployeeId;
+      } else if (scope === "selected" && selectedEmployees.length > 0) {
+        requestBody.employee_ids = selectedEmployees.map(e => e.id);
+      } else if (scope === "all") {
+        requestBody.process_all = true;
       }
 
-      setCreating(false);
+      const response = await fetch(`${API_BASE_URL}/payslips/process`, {
+        method: "POST",
+        headers: {
+          Authorization: authHeader,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      });
 
-      if (createdPayslips.length > 0) {
-        alert(`✅ נוצרו ${createdPayslips.length} תלושי שכר בהצלחה!`);
-        if (errors.length > 0) {
-          alert(`⚠️ שגיאות: ${errors.join("\n")}`);
-        }
-        onSuccess();
-        onOpenChange(false);
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || "Failed to process payroll");
+      }
+
+      if (data.success && data.data) {
+        setResult(data.data);
         
-        // Navigate to payslips page
-        router.push(`/${locale}/payslips`);
+        if (data.data.processed > 0) {
+          // Refresh payslips list after a short delay
+          setTimeout(() => {
+            onSuccess();
+            // Navigate to payslips page to see the created payslips
+            router.push(`/${locale}/payslips`);
+          }, 1000);
+        }
       } else {
-        alert(`❌ שגיאה: לא נוצרו תלושי שכר.\n${errors.join("\n")}`);
+        throw new Error("Unexpected response format");
       }
     } catch (err: any) {
-      console.error("Error creating payslips:", err);
+      console.error("Error processing payroll:", err);
       alert(`❌ שגיאה: ${err.message || "Unknown error"}`);
-      setCreating(false);
+      setProcessing(false);
     }
   };
 
@@ -150,6 +145,22 @@ export function CreatePayslipsDialog({
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {!selectedPeriod && (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+              <p className="text-sm text-yellow-700">
+                ⚠️ אנא בחר תקופת שכר בראש הדף
+              </p>
+            </div>
+          )}
+
+          {selectedPeriod && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+              <p className="text-sm text-blue-700">
+                תקופת שכר: <strong>{selectedPeriod.period_description}</strong>
+              </p>
+            </div>
+          )}
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               טווח עובדים <span className="text-red-500">*</span>
@@ -162,7 +173,7 @@ export function CreatePayslipsDialog({
                   value="selected"
                   checked={scope === "selected"}
                   onChange={(e) => setScope(e.target.value as PayslipScope)}
-                  disabled={creating || selectedEmployees.length === 0}
+                  disabled={processing || selectedEmployees.length === 0}
                   className="h-4 w-4"
                 />
                 <span className="text-sm">
@@ -176,7 +187,7 @@ export function CreatePayslipsDialog({
                   value="single"
                   checked={scope === "single"}
                   onChange={(e) => setScope(e.target.value as PayslipScope)}
-                  disabled={creating}
+                  disabled={processing}
                   className="h-4 w-4"
                 />
                 <span className="text-sm">עובד יחיד</span>
@@ -188,7 +199,7 @@ export function CreatePayslipsDialog({
                   value="all"
                   checked={scope === "all"}
                   onChange={(e) => setScope(e.target.value as PayslipScope)}
-                  disabled={creating}
+                  disabled={processing}
                   className="h-4 w-4"
                 />
                 <span className="text-sm">
@@ -208,7 +219,7 @@ export function CreatePayslipsDialog({
                 onChange={(e) => setSingleEmployeeId(e.target.value)}
                 className="w-full h-10 px-3 py-2 text-sm border border-gray-300 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 required
-                disabled={creating}
+                disabled={processing}
               >
                 <option value="">בחר עובד</option>
                 {allEmployees.map((emp) => (
@@ -220,64 +231,45 @@ export function CreatePayslipsDialog({
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                חודש <span className="text-red-500">*</span>
-              </label>
-              <select
-                value={month}
-                onChange={(e) => setMonth(parseInt(e.target.value))}
-                className="w-full h-10 px-3 py-2 text-sm border border-gray-300 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                required
-                disabled={creating}
-              >
-                <option value="1">ינואר</option>
-                <option value="2">פברואר</option>
-                <option value="3">מרץ</option>
-                <option value="4">אפריל</option>
-                <option value="5">מאי</option>
-                <option value="6">יוני</option>
-                <option value="7">יולי</option>
-                <option value="8">אוגוסט</option>
-                <option value="9">ספטמבר</option>
-                <option value="10">אוקטובר</option>
-                <option value="11">נובמבר</option>
-                <option value="12">דצמבר</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                שנה <span className="text-red-500">*</span>
-              </label>
-              <Input
-                type="number"
-                value={year}
-                onChange={(e) => setYear(parseInt(e.target.value))}
-                min="2000"
-                max="2100"
-                required
-                disabled={creating}
-                className="h-10"
-              />
-            </div>
-          </div>
-
-          {creating && (
+          {processing && (
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-              <div className="flex items-center gap-2 mb-2">
+              <div className="flex items-center gap-2">
                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
                 <span className="text-sm text-blue-700">
-                  יוצר תלושי שכר... ({progress.current}/{progress.total})
+                  מעבד שכר...
                 </span>
               </div>
-              <div className="w-full bg-blue-200 rounded-full h-2">
-                <div
-                  className="bg-blue-600 h-2 rounded-full transition-all"
-                  style={{ width: `${(progress.current / progress.total) * 100}%` }}
-                ></div>
-              </div>
+            </div>
+          )}
+
+          {result && (
+            <div className={`border rounded-lg p-3 ${result.failed > 0 ? 'bg-yellow-50 border-yellow-200' : 'bg-green-50 border-green-200'}`}>
+              <p className="text-sm font-medium mb-2">
+                {result.failed > 0 ? '⚠️ עיבוד הושלם עם שגיאות' : '✅ עיבוד הושלם בהצלחה'}
+              </p>
+              <p className="text-sm mb-1">
+                עובדים שעובדו: <strong>{result.processed}</strong>
+              </p>
+              {result.failed > 0 && (
+                <>
+                  <p className="text-sm mb-2">
+                    עובדים שנכשלו: <strong>{result.failed}</strong>
+                  </p>
+                  {result.errors.length > 0 && (
+                    <div className="mt-2 max-h-32 overflow-y-auto">
+                      <p className="text-xs font-medium mb-1">שגיאות:</p>
+                      <ul className="text-xs list-disc list-inside space-y-1">
+                        {result.errors.slice(0, 5).map((error, idx) => (
+                          <li key={idx} className="text-yellow-700">{error}</li>
+                        ))}
+                        {result.errors.length > 5 && (
+                          <li className="text-yellow-600">ועוד {result.errors.length - 5} שגיאות...</li>
+                        )}
+                      </ul>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )}
 
@@ -285,14 +277,19 @@ export function CreatePayslipsDialog({
             <Button
               type="button"
               variant="outline"
-              onClick={() => onOpenChange(false)}
-              disabled={creating}
+              onClick={() => {
+                onOpenChange(false);
+                setResult(null);
+              }}
+              disabled={processing}
             >
-              ביטול
+              {result ? "סגור" : "ביטול"}
             </Button>
-            <Button type="submit" disabled={creating}>
-              {creating ? "יוצר..." : `צור תלושי שכר (${getTargetEmployees().length})`}
-            </Button>
+            {!result && (
+              <Button type="submit" disabled={processing || !selectedPeriod}>
+                {processing ? "מעבד..." : `עבד שכר (${getTargetEmployees().length})`}
+              </Button>
+            )}
           </div>
         </form>
       </DialogContent>

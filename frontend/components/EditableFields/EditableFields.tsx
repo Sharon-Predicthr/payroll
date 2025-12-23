@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { LookupSelect } from "@/components/LookupSelect";
 import { cn } from "@/lib/utils";
+import { formatDateOnly, parseDateOnly } from "@/lib/dateUtils";
 
 export interface EditableField {
   id: string;
@@ -146,8 +147,11 @@ export function EditableFields({
       
       // For other field types, show the value as text
       // Handle boolean values properly
+      // Handle date fields - show YYYY-MM-DD format
       let displayValue = value;
-      if (typeof value === 'boolean') {
+      if (field.type === 'date') {
+        displayValue = formatDateOnly(value) || "N/A";
+      } else if (typeof value === 'boolean') {
         displayValue = value ? 'כן' : 'לא';
       } else if (value === null || value === undefined || value === '') {
         displayValue = "N/A";
@@ -217,8 +221,8 @@ export function EditableFields({
         inputElement = (
           <Input
             type="date"
-            value={value ? (value instanceof Date ? value.toISOString().split('T')[0] : value) : ""}
-            onChange={(e) => handleChange(field.id, e.target.value)}
+            value={formatDateOnly(value)}
+            onChange={(e) => handleChange(field.id, parseDateOnly(e.target.value))}
             placeholder={field.placeholder}
             disabled={field.disabled}
             className="h-8 text-sm"

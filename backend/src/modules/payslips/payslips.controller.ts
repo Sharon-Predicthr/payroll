@@ -1,8 +1,9 @@
-import { Controller, Get, Post, Param, Body, Query, UseGuards, Request, Res, Logger } from '@nestjs/common';
+import { Controller, Get, Post, Put, Param, Body, Query, UseGuards, Request, Res, Logger } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { TenantConnectionGuard } from '../../common/guards/tenant-connection.guard';
 import { PayslipsService } from './payslips.service';
 import { CreatePayslipDto } from './dto/create-payslip.dto';
+import { ProcessPayrollDto } from './dto/process-payroll.dto';
 import { Response } from 'express';
 
 @Controller('payslips')
@@ -11,6 +12,40 @@ export class PayslipsController {
   private readonly logger = new Logger(PayslipsController.name);
 
   constructor(private payslipsService: PayslipsService) {}
+
+  @Get('latest/:employeeId')
+  async getLatestPayslip(@Param('employeeId') employeeId: string, @Request() req: any) {
+    try {
+      const tenantId = req.user.tenant_id;
+      const tenantCode = req.tenantCode;
+      const userId = req.user.user_id;
+      const userRole = req.user.role;
+
+      const payslip = await this.payslipsService.getLatestPayslipForEmployee(
+        employeeId,
+        tenantId,
+        tenantCode,
+        userId,
+        userRole,
+      );
+
+      if (!payslip) {
+        return {
+          success: false,
+          data: null,
+          message: 'No payslip found for this employee',
+        };
+      }
+
+      return {
+        success: true,
+        data: payslip,
+      };
+    } catch (error: any) {
+      this.logger.error(`Failed to get latest payslip for employee ${employeeId}:`, error);
+      throw error;
+    }
+  }
 
   @Get(':id')
   async getPayslip(@Param('id') id: string, @Request() req: any) {
@@ -175,6 +210,84 @@ export class PayslipsController {
           message: error.message || 'Failed to generate PDF',
         });
       }
+    }
+  }
+
+  @Get('template/preference')
+  async getTemplatePreference(@Request() req: any) {
+    try {
+      const tenantCode = req.tenantCode;
+      this.logger.log(`[getTemplatePreference] Getting template preference for tenant: ${tenantCode}`);
+      const result = await this.payslipsService.getPayslipTemplatePreferenceForCompany(tenantCode);
+      this.logger.log(`[getTemplatePreference] Result: ${JSON.stringify(result)}`);
+      return {
+        success: true,
+        data: result,
+      };
+    } catch (error: any) {
+      this.logger.error('[getTemplatePreference] Error:', error);
+      return {
+        success: false,
+        message: error.message || 'Failed to get template preference',
+      };
+    }
+  }
+
+  @Put('template/preference')
+  async updateTemplatePreference(@Body() body: { template: 'template1' | 'template2' }, @Request() req: any) {
+    try {
+      const tenantCode = req.tenantCode;
+      const userRole = req.user.role;
+
+      // Only PAYROLL_MANAGER can update template preference
+      if (userRole !== 'PAYROLL_MANAGER') {
+        return {
+          success: false,
+          message: 'Only payroll managers can update template preference',
+        };
+      }
+
+      if (!body.template || !['template1', 'template2'].includes(body.template)) {
+        return {
+          success: false,
+          message: 'Invalid template. Must be template1 or template2',
+        };
+      }
+
+      const result = await this.payslipsService.updatePayslipTemplatePreference(tenantCode, body.template);
+      return {
+        success: result.success,
+        message: result.message,
+      };
+    } catch (error: any) {
+      this.logger.error('[updateTemplatePreference] Error:', error);
+      return {
+        success: false,
+        message: error.message || 'Failed to update template preference',
+      };
+    }
+  }
+
+  @Post('process')
+  async processPayroll(@Body() dto: ProcessPayrollDto, @Request() req: any) {
+    try {
+      const tenantId = req.user.tenant_id;
+      const tenantCode = req.tenantCode;
+
+      const result = await this.payslipsService.processPayroll(
+        dto,
+        tenantId,
+        tenantCode,
+      );
+
+      return {
+        success: true,
+        data: result,
+        message: `Processed ${result.processed} employees${result.failed > 0 ? `, ${result.failed} failed` : ''}`,
+      };
+    } catch (error: any) {
+      this.logger.error('Failed to process payroll:', error);
+      throw error;
     }
   }
 }

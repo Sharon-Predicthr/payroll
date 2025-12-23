@@ -389,15 +389,44 @@ export class EmployeesService extends BaseTenantService {
         ? 'pay_item_name'
         : columns[0] || 'pay_item_id';
       
-      const result = await pool
+      // Check if xlg_pay_items table exists for JOIN
+      const payItemsTableCheck = await pool
         .request()
-        .input('employeeId', sql.NVarChar, employeeId)
         .query(`
-          SELECT *
-          FROM employees_pay_items
-          WHERE employee_id = @employeeId
-          ORDER BY ${orderBy}
+          SELECT COUNT(*) as table_exists
+          FROM INFORMATION_SCHEMA.TABLES
+          WHERE TABLE_NAME = 'xlg_pay_items'
         `);
+      
+      const hasPayItemsTable = payItemsTableCheck.recordset[0].table_exists > 0;
+      
+      let result;
+      if (hasPayItemsTable) {
+        // JOIN with xlg_pay_items to get item_name
+        result = await pool
+          .request()
+          .input('employeeId', sql.NVarChar, employeeId)
+          .query(`
+            SELECT 
+              epi.*,
+              xpi.item_name as pay_item_name_from_lookup
+            FROM employees_pay_items epi
+            LEFT JOIN xlg_pay_items xpi ON epi.item_code = xpi.item_code
+            WHERE epi.employee_id = @employeeId
+            ORDER BY ${orderBy}
+          `);
+      } else {
+        // Fallback: no JOIN if xlg_pay_items doesn't exist
+        result = await pool
+          .request()
+          .input('employeeId', sql.NVarChar, employeeId)
+          .query(`
+            SELECT *
+            FROM employees_pay_items
+            WHERE employee_id = @employeeId
+            ORDER BY ${orderBy}
+          `);
+      }
 
       // Log available columns for debugging
       if (result.recordset.length > 0) {
@@ -406,6 +435,14 @@ export class EmployeesService extends BaseTenantService {
 
       return result.recordset.map((row: any) => {
         const mapped: any = { ...row }; // Keep all original columns
+        
+        // Use item_name from xlg_pay_items if available, otherwise use existing pay_item_name
+        if (hasPayItemsTable && row.pay_item_name_from_lookup) {
+          mapped.pay_item_name = row.pay_item_name_from_lookup;
+        } else if (!mapped.pay_item_name && row.pay_item_name_from_lookup) {
+          mapped.pay_item_name = row.pay_item_name_from_lookup;
+        }
+        
         // Map to expected field names
         Object.keys(row).forEach(key => {
           const lowerKey = key.toLowerCase();

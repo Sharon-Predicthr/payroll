@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
+import { useLocale } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -10,7 +12,10 @@ import { useTranslations } from 'next-intl';
 import { EditableFields, EditableField } from "@/components/EditableFields";
 import { EditableTable } from "@/components/EditableTable";
 import { LookupSelect } from "@/components/LookupSelect";
+import { LookupGridSelect } from "@/components/LookupGridSelect/LookupGridSelect";
 import { useEmployeeSave, EmployeeChanges } from "@/hooks/useEmployeeSave";
+import { usePayrollPeriod } from "@/contexts/PayrollPeriodContext";
+import { formatDateOnly, parseDateOnly } from "@/lib/dateUtils";
 
 interface Employee {
   id: string;
@@ -75,16 +80,21 @@ function getStatusColor(status: string): string {
 }
 
 export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }: EmployeeDetailProps) {
+  const router = useRouter();
+  const locale = useLocale();
   const { direction } = useDirection();
+  const { selectedPeriod } = usePayrollPeriod();
   const t = useTranslations('employees');
   const tCommon = useTranslations('common');
   const [isEditing, setIsEditing] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
   const [employeeData, setEmployeeData] = useState<Record<string, any>>({});
+  const [loadingPayslip, setLoadingPayslip] = useState(false);
   
   // Track changes for each tab
   const [masterChanges, setMasterChanges] = useState<Record<string, any>>({});
   const [taxChanges, setTaxChanges] = useState<Record<string, any>>({});
+  const [savedTaxValues, setSavedTaxValues] = useState<Record<string, any>>({}); // Store saved values until employeeDetail refreshes
   const [contractsChanges, setContractsChanges] = useState<{ created?: any[]; updated?: any[]; deleted?: (number | string)[] }>({});
   const [attendanceChanges, setAttendanceChanges] = useState<{ created?: any[]; updated?: any[]; deleted?: (number | string)[] }>({});
   const [bankDetailsChanges, setBankDetailsChanges] = useState<{ created?: any[]; updated?: any[]; deleted?: (number | string)[] }>({});
@@ -93,6 +103,23 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
   
   // Use the save hook
   const { saveAll, isSaving, saveError, clearError } = useEmployeeSave(employee?.id);
+
+  // Clear savedTaxValues when employeeDetail refreshes (after save)
+  useEffect(() => {
+    if (employeeDetail && Object.keys(savedTaxValues).length > 0) {
+      // Check if the saved values match the new employeeDetail
+      // If they match, clear savedTaxValues (data has been refreshed)
+      const allMatch = Object.keys(savedTaxValues).every(key => {
+        const savedValue = savedTaxValues[key];
+        const currentValue = employeeDetail.tax_profile?.[key];
+        return String(savedValue) === String(currentValue);
+      });
+      
+      if (allMatch) {
+        setSavedTaxValues({});
+      }
+    }
+  }, [employeeDetail, savedTaxValues]);
 
   // Initialize employeeData from employeeDetail
   useEffect(() => {
@@ -263,21 +290,29 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
       const result = await saveAll(allChanges);
 
       if (result.success) {
-        // Clear all change tracking
-        setMasterChanges({});
-        setTaxChanges({});
-        setContractsChanges({});
-        setAttendanceChanges({});
-        setBankDetailsChanges({});
-        setPensionChanges({});
-        setPayItemsChanges({});
+        // Store saved tax values to display immediately until employeeDetail refreshes
+        if (Object.keys(taxChanges).length > 0) {
+          setSavedTaxValues(prev => ({ ...prev, ...taxChanges }));
+        }
         
         setIsEditing(false);
         
-        // Refresh employee data
+        // Refresh employee data from server
         if (onSave) {
           onSave();
         }
+        
+        // Clear change tracking after a delay to allow UI to update
+        // The savedTaxValues will be cleared when employeeDetail refreshes
+        setTimeout(() => {
+          setMasterChanges({});
+          setTaxChanges({});
+          setContractsChanges({});
+          setAttendanceChanges({});
+          setBankDetailsChanges({});
+          setPensionChanges({});
+          setPayItemsChanges({});
+        }, 100);
       } else {
         // Error is already set in the hook
         console.error('[EmployeeDetail] Save failed:', result.error);
@@ -392,16 +427,84 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                     </svg>
                     {tCommon('edit')}
                   </Button>
-                  <Button variant="outline" className="h-8 px-2.5 text-xs">
-                    <svg className="w-3.5 h-3.5 mr-1.5 rtl:mr-0 rtl:ml-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                      />
-                    </svg>
-                    {t('actions.payslip')}
+                  <Button 
+                    variant="outline" 
+                    className="h-8 px-2.5 text-xs"
+                    disabled={loadingPayslip}
+                    onClick={async (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      
+                      if (!employee || loadingPayslip) {
+                        return;
+                      }
+                      
+                      setLoadingPayslip(true);
+                      try {
+                        const token = localStorage.getItem('paylens_access_token');
+                        if (!token) {
+                          alert("לא מאומת - אנא התחבר מחדש");
+                          setLoadingPayslip(false);
+                          return;
+                        }
+
+                        // First, get the latest payslip ID
+                        const payslipResponse = await fetch(`/api/payslips/latest/${employee.id}`, {
+                          headers: {
+                            Authorization: `Bearer ${token}`,
+                          },
+                        });
+
+                        const payslipData = await payslipResponse.json();
+
+                        if (!payslipResponse.ok || !payslipData.success || !payslipData.data) {
+                          alert("לא נמצא תלוש שכר עבור עובד זה");
+                          setLoadingPayslip(false);
+                          return;
+                        }
+
+                        // Extract payslip ID
+                        const payslipId = payslipData.data?.payslip?.id || 
+                                         payslipData.data?.id || 
+                                         (payslipData.data?.payslip && typeof payslipData.data.payslip === 'string' ? payslipData.data.payslip : null);
+
+                        if (!payslipId) {
+                          alert("לא נמצא תלוש שכר עבור עובד זה");
+                          setLoadingPayslip(false);
+                          return;
+                        }
+
+                        // Open payslip in a new tab
+                        window.open(`/${locale}/payslip/${payslipId}`, '_blank');
+                      } catch (err: any) {
+                        console.error("Error downloading payslip:", err);
+                        alert(`❌ שגיאה בהורדת תלוש שכר: ${err.message || "Unknown error"}`);
+                      } finally {
+                        setLoadingPayslip(false);
+                      }
+                    }}
+                  >
+                    {loadingPayslip ? (
+                      <>
+                        <svg className="animate-spin h-3.5 w-3.5 mr-1.5 rtl:mr-0 rtl:ml-1.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        טוען...
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-3.5 h-3.5 mr-1.5 rtl:mr-0 rtl:ml-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                          />
+                        </svg>
+                        {t('actions.payslip')}
+                      </>
+                    )}
                   </Button>
                   <Button 
                     variant="outline" 
@@ -468,7 +571,6 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
             {(() => {
               // Define field mappings with labels and types - ordered to minimize gaps
               const fieldDefinitions: Record<string, { label: string; type?: EditableField['type']; span?: number; lookupKey?: string }> = {
-                employee_id: { label: 'מזהה עובד', type: 'text', span: 1 },
                 employee_code: { label: 'קוד עובד', type: 'text', span: 1 },
                 department_number: { label: 'מספר מחלקה', type: 'lookup', span: 1, lookupKey: 'department_number' },
                 position: { label: 'תפקיד', type: 'text', span: 1 },
@@ -485,7 +587,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
 
               // Get all fields from employeeData, excluding client_id, personal fields (shown in Personal tab), and related data
               const excludedFields = [
-                'client_id', 'id', 'bank_details', 'pay_items', 'pension_profile', 'tax_profile', 
+                'client_id', 'id', 'employee_id', 'bank_details', 'pay_items', 'pension_profile', 'tax_profile', 
                 'attendance', 'contracts', 'leave_balances',
                 'first_name', 'last_name', 'full_name', 'email', 'phone', 'cell_phone_number', 
                 'tz_id', 'national_id', 'gender', 'date_of_birth', 'address_line1', 'address_line2', 'city_code', 'zip_code', 'termination_date',
@@ -633,14 +735,12 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                 {isEditing ? (
                   <Input 
                     type="date" 
-                    defaultValue={employeeDetail?.hire_date ? new Date(employeeDetail.hire_date).toISOString().split('T')[0] : ""} 
+                    defaultValue={formatDateOnly(employeeDetail?.hire_date)} 
                     className="h-8 text-sm" 
                   />
                 ) : (
                   <p className="text-sm text-text-main py-1.5">
-                    {employeeDetail?.hire_date 
-                      ? new Date(employeeDetail.hire_date).toLocaleDateString() 
-                      : "N/A"}
+                    {formatDateOnly(employeeDetail?.hire_date) || "N/A"}
                   </p>
                 )}
               </div>
@@ -711,12 +811,12 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                     editor: (value, row, onChange) => (
                       <Input
                         type="date"
-                        value={value ? (value instanceof Date ? value.toISOString().split('T')[0] : String(value).split('T')[0]) : ""}
+                        value={formatDateOnly(value)}
                         onChange={(e) => onChange(e.target.value)}
                         className="min-h-10 h-auto text-sm"
                       />
                     ),
-                    render: (value) => value ? new Date(value).toLocaleDateString("he-IL") : "N/A",
+                    render: (value) => formatDateOnly(value) || "N/A",
                   },
                   {
                     id: "end_date",
@@ -724,12 +824,12 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                     editor: (value, row, onChange) => (
                       <Input
                         type="date"
-                        value={value ? (value instanceof Date ? value.toISOString().split('T')[0] : String(value).split('T')[0]) : ""}
+                        value={formatDateOnly(value)}
                         onChange={(e) => onChange(e.target.value)}
                         className="min-h-10 h-auto text-sm"
                       />
                     ),
-                    render: (value) => value ? new Date(value).toLocaleDateString("he-IL") : "N/A",
+                    render: (value) => formatDateOnly(value) || "N/A",
                   },
                   {
                     id: "employment_type",
@@ -1137,9 +1237,49 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
           {/* Tax Tab */}
           <TabsContent value="tax" className="space-y-3">
             {(() => {
-              const taxFieldDefinitions: Record<string, { label: string; type?: EditableField['type']; span?: number; lookupKey?: string }> = {
+              const taxFieldDefinitions: Record<string, { label: string; type?: EditableField['type']; span?: number; lookupKey?: string; render?: (value: any, isEditing: boolean, onChange: (value: any) => void) => React.ReactNode }> = {
                 is_resident: { label: 'תושב', type: 'select', span: 1 },
-                company_car_benefit_group_id: { label: 'קבוצת הטבה רכב חברה', type: 'lookup', span: 1, lookupKey: 'company_car_benefit_group_id' },
+                company_car_benefit_group_id: { 
+                  label: 'קבוצת הטבה רכב חברה', 
+                  type: 'lookup', 
+                  span: 1, 
+                  lookupKey: 'company_car_benefit_group_id',
+                  render: (value, isEditing, onChange) => {
+                    if (!isEditing) {
+                      // Read-only mode - use LookupSelect
+                      return (
+                        <LookupSelect
+                          lookupKey="company_car_benefit_group_id"
+                          value={value}
+                          onChange={() => {}}
+                          disabled={true}
+                          className="min-h-10 h-auto text-sm"
+                        />
+                      );
+                    }
+                    // Edit mode - use LookupGridSelect with grid view
+                    // Use key prop to force re-render when value changes (after save)
+                    return (
+                      <LookupGridSelect
+                        key={`car-benefit-${value || 'empty'}-${isEditing}`}
+                        lookupKey="company_car_benefit_group_id"
+                        value={value}
+                        onChange={onChange}
+                        className="min-h-10 h-auto text-sm"
+                        searchable={true}
+                        searchFields={['make_name', 'sub_model']}
+                        displayColumns={['car_id', 'model_year', 'make_name', 'sub_model', 'monthly_car_benefit']}
+                        columnLabels={{
+                          'car_id': 'קוד',
+                          'model_year': 'שנה',
+                          'make_name': 'רכב',
+                          'sub_model': 'מודל',
+                          'monthly_car_benefit': 'הטבה חודשית',
+                        }}
+                      />
+                    );
+                  },
+                },
                 additional_credit_points: { label: 'נקודות זיכוי נוספות', type: 'number', span: 1 },
                 special_tax_percent1: { label: 'אחוז מס מיוחד 1', type: 'number', span: 1 },
                 spt1_annual_threshhold: { label: 'סף שנתי מס מיוחד 1', type: 'number', span: 1 },
@@ -1152,7 +1292,14 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                 special_bl_threshhold: { label: 'סף ביטוח לאומי מיוחד', type: 'number', span: 1 },
               };
 
-              const taxData = employeeDetail?.tax_profile || {};
+              // Merge taxChanges and savedTaxValues into taxData for immediate display
+              // savedTaxValues contains values that were just saved (until employeeDetail refreshes)
+              // taxChanges contains values being edited (during editing)
+              const taxData = { 
+                ...(employeeDetail?.tax_profile || {}), 
+                ...savedTaxValues, // Saved values take precedence (most recent)
+                ...taxChanges, // Current edits take highest precedence
+              };
               // Show all defined fields, not just those that exist in taxData
               // This ensures all fields are displayed even if tax_profile is empty or missing
               const taxFields: EditableField[] = Object.keys(taxFieldDefinitions)
@@ -1175,6 +1322,8 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                     } : {}),
                     // Add lookupKey if defined
                     ...(def.lookupKey ? { lookupKey: def.lookupKey } : {}),
+                    // Add render function if defined
+                    ...(def.render ? { render: def.render } : {}),
                   };
                 });
 
@@ -1831,10 +1980,10 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       </p>
                       <p className="text-xs text-text-muted">
                         {contract.start_date 
-                          ? `${t('fields.started')}: ${new Date(contract.start_date).toLocaleDateString()}`
+                          ? `${t('fields.started')}: ${formatDateOnly(contract.start_date)}`
                           : ""}
                         {contract.end_date 
-                          ? ` - ${t('fields.ends')}: ${new Date(contract.end_date).toLocaleDateString()}`
+                          ? ` - ${t('fields.ends')}: ${formatDateOnly(contract.end_date)}`
                           : ""}
                         {contract.salary !== null && contract.salary !== undefined
                           ? ` - ${t('fields.salary')}: $${Number(contract.salary).toLocaleString()}`

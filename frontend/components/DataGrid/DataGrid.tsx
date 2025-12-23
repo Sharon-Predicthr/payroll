@@ -277,10 +277,18 @@ export function DataGrid<T = any>({
     return sorted;
   }, [data, config.sortColumn, config.sortDirection, columns, disableInternalSorting]);
 
-  // Notify parent of sorted data changes
+  // Notify parent of sorted data changes (only when data actually changes)
+  const prevSortedDataRef = useRef<T[]>([]);
   useEffect(() => {
-    if (onSortedDataChange) {
+    // Only call onSortedDataChange if the data actually changed (by reference or content)
+    const dataChanged = prevSortedDataRef.current.length !== sortedData.length ||
+      prevSortedDataRef.current.some((item, index) => item !== sortedData[index]);
+    
+    if (dataChanged && onSortedDataChange) {
+      prevSortedDataRef.current = sortedData;
       onSortedDataChange(sortedData);
+    } else {
+      prevSortedDataRef.current = sortedData;
     }
   }, [sortedData, onSortedDataChange]);
 

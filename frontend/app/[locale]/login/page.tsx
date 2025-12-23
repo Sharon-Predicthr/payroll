@@ -84,6 +84,11 @@ export default function LoginPage() {
       saveAuthData(data);
       setSuccess(true);
       
+      // Dispatch custom event to notify other components about auth state change
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('authStateChanged'));
+      }
+      
       // Redirect to dashboard (preserve current locale)
       setTimeout(() => {
         router.push(`/${locale}`);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useLocale } from 'next-intl';
 import { useTranslations } from 'next-intl';
@@ -81,6 +81,7 @@ export default function EmployeesPage() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<Set<string>>(new Set());
   const [showCreatePayslipsDialog, setShowCreatePayslipsDialog] = useState(false);
+  const [userManuallySelected, setUserManuallySelected] = useState(false); // Track if user manually selected an employee
   
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -205,7 +206,6 @@ export default function EmployeesPage() {
         setTotalPages(1);
       }
       
-      // Don't auto-select here - let useEffect handle it based on filteredAndSortedEmployees
       
       console.log('[EmployeesPage] ✅ Fetch completed successfully');
     } catch (err: any) {
@@ -323,8 +323,18 @@ export default function EmployeesPage() {
 
   // Handle sorted data change from DataGrid
   const handleSortedDataChange = useCallback((sortedData: Employee[]) => {
+    console.log('[EmployeesPage] DataGrid sorted data changed, first employee:', sortedData[0]?.id, sortedData[0]?.name);
     setSortedEmployees(sortedData);
-  }, []);
+    
+    // Auto-select first employee from sorted list if no employee is selected
+    // This ensures we select what's actually displayed in the DataGrid
+    if (sortedData.length > 0 && !selectedEmployee) {
+      const firstEmployee = sortedData[0];
+      console.log('[EmployeesPage] ✅ Auto-selecting first employee from DataGrid sorted list:', firstEmployee.id, firstEmployee.name);
+      setSelectedEmployee(firstEmployee);
+      setUserManuallySelected(false);
+    }
+  }, [selectedEmployee]);
 
   // Handle sort change from DataGrid
   const handleSortChange = useCallback((sortColumn: string | null, sortDirection: 'asc' | 'desc') => {
@@ -332,35 +342,51 @@ export default function EmployeesPage() {
     // The sorted data will be available through onSortedDataChange
   }, []);
 
-  // Auto-select first employee from sorted list when it changes
-  // This ensures the selected employee matches what's displayed first in the DataGrid
+  // Auto-select first employee when employees are loaded (fallback if DataGrid hasn't called onSortedDataChange yet)
   useEffect(() => {
-    // Skip if still loading
-    if (loading) {
+    if (loading || employees.length === 0) {
       return;
     }
 
-    if (sortedEmployees.length === 0) {
-      // If sorted list is empty, clear selection
-      if (selectedEmployee) {
-        console.log('[EmployeesPage] Sorted list is empty, clearing selection');
-        setSelectedEmployee(null);
-        setSelectedEmployeeDetail(null);
+    // Only select if no employee is selected and we have filtered employees
+    // The DataGrid will call onSortedDataChange with the sorted list, which will handle the selection
+    // This is just a fallback in case DataGrid doesn't call it immediately
+    if (!selectedEmployee && filteredEmployees.length > 0) {
+      // Wait a bit for DataGrid to process and call onSortedDataChange
+      const timeoutId = setTimeout(() => {
+        // If still no selection after DataGrid had time to process, select first from filtered
+        if (!selectedEmployee && filteredEmployees.length > 0) {
+          const firstEmployee = filteredEmployees[0];
+          console.log('[EmployeesPage] ✅ Fallback: Auto-selecting first employee from filtered list:', firstEmployee.id, firstEmployee.name);
+          setSelectedEmployee(firstEmployee);
+          setUserManuallySelected(false);
+        }
+      }, 100);
+      
+      return () => clearTimeout(timeoutId);
+    }
+  }, [employees, loading, filteredEmployees, selectedEmployee]);
+
+  // Auto-select first employee when sorted list changes (after filtering/sorting)
+  // Use sortedEmployees to match what's actually displayed in DataGrid
+  useEffect(() => {
+    if (loading || sortedEmployees.length === 0) {
+      return;
+    }
+
+    // Check if selected employee still exists in sorted list
+    const selectedStillInList = selectedEmployee && 
+      sortedEmployees.some(emp => emp.id === selectedEmployee.id);
+
+    // If selected employee is not in sorted list, select the first one (as displayed in DataGrid)
+    if (!selectedStillInList && !userManuallySelected) {
+      const firstEmployee = sortedEmployees[0];
+      if (firstEmployee) {
+        console.log('[EmployeesPage] Auto-selecting first employee from sorted list (selected not in list):', firstEmployee.id, firstEmployee.name);
+        setSelectedEmployee(firstEmployee);
       }
-      return;
     }
-
-    // Always select the first employee from the sorted list (as displayed in DataGrid)
-    // This ensures the selected employee matches what's displayed first in the DataGrid
-    const firstEmployee = sortedEmployees[0];
-    
-    // Only update if the first employee is different from the currently selected one
-    if (!selectedEmployee || selectedEmployee.id !== firstEmployee.id) {
-      console.log('[EmployeesPage] Auto-selecting first employee from sorted list (as displayed in DataGrid):', firstEmployee.id, firstEmployee.name);
-      setSelectedEmployee(firstEmployee);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sortedEmployees, loading]);
+  }, [sortedEmployees, loading, selectedEmployee, userManuallySelected]);
 
   const departments = Array.from(new Set(employees.map((e) => e.department).filter(Boolean)));
   const countries = Array.from(new Set(employees.map((e) => e.country).filter(Boolean)));
@@ -467,6 +493,48 @@ export default function EmployeesPage() {
     document.addEventListener("mousemove", handleMouseMove);
     document.addEventListener("mouseup", handleMouseUp);
   };
+
+  // Debug: Log when employees page renders
+  useEffect(() => {
+    console.log('[EmployeesPage] Component mounted/updated');
+    console.log('[EmployeesPage] Checking for elements that might block sidebar');
+    
+    // Check if there are any elements covering the sidebar
+    const checkForBlockingElements = () => {
+      const sidebar = document.querySelector('aside');
+      if (sidebar) {
+        const sidebarRect = sidebar.getBoundingClientRect();
+        console.log('[EmployeesPage] Sidebar position:', sidebarRect);
+        
+        // Check for elements at the same position
+        const elementsAtSidebarPosition = document.elementsFromPoint(
+          sidebarRect.left + 10,
+          sidebarRect.top + 100
+        );
+        console.log('[EmployeesPage] Elements at sidebar position:', elementsAtSidebarPosition);
+        
+        elementsAtSidebarPosition.forEach((el, index) => {
+          if (el !== sidebar && !sidebar.contains(el)) {
+            const rect = el.getBoundingClientRect();
+            const styles = window.getComputedStyle(el);
+            console.log(`[EmployeesPage] Element ${index} blocking sidebar:`, {
+              tag: el.tagName,
+              id: el.id,
+              className: el.className,
+              position: styles.position,
+              zIndex: styles.zIndex,
+              pointerEvents: styles.pointerEvents,
+              rect: rect,
+            });
+          }
+        });
+      }
+    };
+    
+    // Check immediately and after a delay
+    checkForBlockingElements();
+    setTimeout(checkForBlockingElements, 1000);
+  }, []);
 
   return (
     <PageShell>
@@ -669,40 +737,6 @@ export default function EmployeesPage() {
                 variant="outline"
                 className="h-9 px-3 text-xs"
                 onClick={() => {
-                  /* Edit logic */
-                }}
-              >
-                <svg className="w-3.5 h-3.5 mr-1.5 rtl:mr-0 rtl:ml-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-                  />
-                </svg>
-                {tCommon('edit')}
-              </Button>
-              <Button
-                variant="outline"
-                className="h-9 px-3 text-xs"
-                onClick={() => {
-                  /* Delete logic */
-                }}
-              >
-                <svg className="w-3.5 h-3.5 mr-1.5 rtl:mr-0 rtl:ml-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                  />
-                </svg>
-                {tCommon('delete')}
-              </Button>
-              <Button
-                variant="outline"
-                className="h-9 px-3 text-xs"
-                onClick={() => {
                   /* Export logic */
                 }}
               >
@@ -739,7 +773,7 @@ export default function EmployeesPage() {
         )}
 
         {/* Main Content - Resizable Split View */}
-        <div className="flex gap-0 h-[calc(100vh-220px)] relative z-0 pointer-events-auto" data-split-container dir={direction}>
+        <div className="flex gap-0 h-[calc(100vh-220px)] relative" data-split-container dir={direction} style={{ zIndex: 0, maxWidth: '100%' }}>
           {/* Left Side - Employees List */}
           <div
             className="bg-white border-r rtl:border-r-0 rtl:border-l border-gray-200 overflow-hidden"
@@ -775,6 +809,7 @@ export default function EmployeesPage() {
                       viewMode={viewMode}
                       onSelectEmployee={(emp) => {
                         console.log('[EmployeesPage] Employee manually selected:', emp.id, emp.name);
+                        setUserManuallySelected(true); // Mark that user manually selected
                         setSelectedEmployee(emp);
                         // Toggle multi-select
                         setSelectedEmployeeIds(prev => {

@@ -81,30 +81,30 @@ export function TopBar() {
 
   return (
     <header className="bg-white border-b border-gray-200 sticky top-0 z-40">
-      <div className="px-6 py-4">
-        <div className="flex items-center justify-between">
+      <div className="px-6 py-3">
+        <div className="flex items-center justify-between gap-4">
           {/* Logo */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-shrink-0">
             <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center cursor-pointer" onClick={() => router.push("/")}>
               <span className="text-white font-semibold text-sm">PL</span>
             </div>
-            <span className="text-xl font-semibold text-gray-900 cursor-pointer" onClick={() => router.push("/")}>
+            <span className="text-xl font-semibold text-gray-900 cursor-pointer whitespace-nowrap" onClick={() => router.push("/")}>
               PayLens
             </span>
           </div>
 
-          {/* Payroll Period Selector - Conspicuously visible at the top */}
-          <div className="flex-1 flex justify-center mx-8">
+          {/* Payroll Period Selector */}
+          <div className="flex-1 flex justify-center min-w-0">
             <PayrollPeriodSelector />
           </div>
 
-          {/* Search */}
-          <div className="flex-1 max-w-xl">
+          {/* Search - Larger */}
+          <div className="flex-1 min-w-[200px] max-w-md">
             <div className="relative">
               <input
                 type="search"
                 placeholder="Search employees, payslips, payroll actions..."
-                className="w-full pl-10 pr-4 rtl:pl-4 rtl:pr-10 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                className="w-full pl-11 pr-4 rtl:pl-4 rtl:pr-11 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-base"
               />
               <svg
                 className="absolute left-3 rtl:left-auto rtl:right-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400"
@@ -122,8 +122,8 @@ export function TopBar() {
             </div>
           </div>
 
-          {/* Right side */}
-          <div className="flex items-center gap-4">
+          {/* Right side - Flex shrink 0 to prevent overflow */}
+          <div className="flex items-center gap-3 flex-shrink-0">
             
             {/* Language Switcher */}
             <LanguageSwitcher />
@@ -135,21 +135,21 @@ export function TopBar() {
             <div className="relative">
               <button
                 onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                className="flex items-center gap-3 pl-4 rtl:pl-0 rtl:pr-4 border-l rtl:border-l-0 rtl:border-r border-gray-200 hover:opacity-80 transition-opacity"
+                className="flex items-center gap-2 pl-3 rtl:pl-0 rtl:pr-3 border-l rtl:border-l-0 rtl:border-r border-gray-200 hover:opacity-80 transition-opacity"
               >
-                <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white font-medium text-sm">
+                <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white font-medium text-sm flex-shrink-0">
                   {user?.email?.charAt(0).toUpperCase() || 'U'}
                 </div>
-                <div className="hidden md:block text-left rtl:text-right">
-                  <p className="text-sm font-medium text-gray-900">
+                <div className="hidden lg:block text-left rtl:text-right">
+                  <p className="text-sm font-medium text-gray-900 whitespace-nowrap">
                     {user?.email || 'User'}
                   </p>
-                  <p className="text-xs text-gray-500">
+                  <p className="text-xs text-gray-500 whitespace-nowrap">
                     {tenant?.name || 'Tenant'}
                   </p>
                 </div>
                 <svg
-                  className={`w-4 h-4 text-gray-400 transition-transform ${isDropdownOpen ? "rotate-180" : ""}`}
+                  className={`w-4 h-4 text-gray-400 transition-transform flex-shrink-0 ${isDropdownOpen ? "rotate-180" : ""}`}
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"

@@ -9,6 +9,7 @@ const TENANT_KEY = 'paylens_tenant';
 export interface AuthUser {
   id: string;
   email: string;
+  role?: string; // PAYROLL_MANAGER or EMPLOYEE
 }
 
 export interface AuthTenant {
@@ -83,5 +84,34 @@ export function clearAuthData(): void {
 export function getAuthHeader(): string | null {
   const token = getAccessToken();
   return token ? `Bearer ${token}` : null;
+}
+
+/**
+ * Get user role from JWT token
+ */
+export function getUserRole(): string | null {
+  if (typeof window === 'undefined') return null;
+  
+  const token = getAccessToken();
+  if (!token) return null;
+
+  try {
+    // Decode JWT token (base64)
+    const payload = token.split('.')[1];
+    if (!payload) return null;
+    
+    const decoded = JSON.parse(atob(payload));
+    return decoded.role || null;
+  } catch (error) {
+    console.error('Error decoding JWT token:', error);
+    return null;
+  }
+}
+
+/**
+ * Check if user is admin (PAYROLL_MANAGER)
+ */
+export function isAdmin(): boolean {
+  return getUserRole() === 'PAYROLL_MANAGER';
 }
 

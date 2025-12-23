@@ -23,6 +23,19 @@ export async function GET(request: NextRequest) {
       },
     });
 
+    // Check if response is HTML (ngrok warning page or error)
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      const text = await response.text();
+      console.error('[API /payroll-periods/current] Backend returned non-JSON response:', {
+        status: response.status,
+        contentType,
+        url: backendUrl,
+        preview: text.substring(0, 200),
+      });
+      throw new Error(`Backend returned ${contentType} instead of JSON. Check BACKEND_URL: ${BACKEND_URL}`);
+    }
+
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
       return NextResponse.json(

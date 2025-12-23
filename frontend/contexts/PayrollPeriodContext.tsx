@@ -31,8 +31,19 @@ export function PayrollPeriodProvider({ children }: { children: ReactNode }) {
   const [selectedPeriod, setSelectedPeriod] = useState<PayrollPeriod | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  // Wait for component to mount (client-side) before checking auth
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const fetchPeriods = async () => {
+    // Wait for mount to ensure localStorage is available
+    if (!mounted) {
+      return;
+    }
+
     if (!isAuthenticated()) {
       setLoading(false);
       return;
@@ -61,17 +72,25 @@ export function PayrollPeriodProvider({ children }: { children: ReactNode }) {
 
       const result = await response.json();
       console.log('[PayrollPeriodContext] API response:', result);
+      console.log('[PayrollPeriodContext] Response status:', response.status);
+      console.log('[PayrollPeriodContext] Response ok:', response.ok);
       
       if (result.success && result.data) {
         const periodsData = Array.isArray(result.data) ? result.data : [];
         console.log('[PayrollPeriodContext] Periods data:', periodsData);
+        console.log('[PayrollPeriodContext] Periods count:', periodsData.length);
         setPeriods(periodsData);
         
-        // Find current period (active and not closed)
-        const activePeriod = periodsData.find(
-          (p: PayrollPeriod) => p.is_active === true && p.is_closed === false
-        );
-        const defaultPeriod = activePeriod || periodsData[0] || null;
+        // Find current period: the period with maximum period_id (not closed)
+        // Sort by period_id descending to find the maximum
+        const sortedPeriods = [...periodsData].sort((a: PayrollPeriod, b: PayrollPeriod) => {
+          return b.period_id.localeCompare(a.period_id);
+        });
+        // Get the maximum period_id that is not closed, or just the maximum if all are closed
+        const activePeriod = sortedPeriods.find(
+          (p: PayrollPeriod) => !p.is_closed
+        ) || sortedPeriods[0] || null;
+        const defaultPeriod = activePeriod;
         setCurrentPeriod(defaultPeriod);
         
         // Set selected period if not already set
@@ -92,10 +111,75 @@ export function PayrollPeriodProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  // Fetch periods when component mounts and when authentication state changes
   useEffect(() => {
-    fetchPeriods();
+    if (!mounted) return;
+
+    // Small delay to ensure localStorage is ready after navigation
+    const timer = setTimeout(() => {
+      if (isAuthenticated()) {
+        console.log('[PayrollPeriodContext] Mounted and authenticated, fetching periods...');
+        fetchPeriods();
+      } else {
+        console.log('[PayrollPeriodContext] Mounted but not authenticated yet');
+        setLoading(false);
+      }
+    }, 100);
+
+    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [mounted]);
+
+  // Also listen for storage changes (when token is set after login)
+  useEffect(() => {
+    if (!mounted) return;
+
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'paylens_access_token' && e.newValue) {
+        // Token was set, fetch periods
+        console.log('[PayrollPeriodContext] Token detected in storage, fetching periods...');
+        fetchPeriods();
+      }
+    };
+
+    // Custom event for same-tab storage changes (localStorage doesn't fire storage event in same tab)
+    const handleCustomStorageChange = () => {
+      if (isAuthenticated() && periods.length === 0) {
+        console.log('[PayrollPeriodContext] Custom storage change detected, fetching periods...');
+        fetchPeriods();
+      }
+    };
+
+    // Listen for storage events (from other tabs/windows)
+    window.addEventListener('storage', handleStorageChange);
+    
+    // Listen for custom event (can be dispatched after login)
+    window.addEventListener('authStateChanged', handleCustomStorageChange);
+
+    // Poll for token if not authenticated yet (for a short time after mount)
+    let pollCount = 0;
+    const maxPolls = 10; // Poll for up to 2 seconds (10 * 200ms)
+    const pollInterval = setInterval(() => {
+      pollCount++;
+      if (isAuthenticated() && periods.length === 0 && !loading) {
+        console.log('[PayrollPeriodContext] Token detected via polling, fetching periods...');
+        fetchPeriods();
+        clearInterval(pollInterval);
+      } else if (pollCount >= maxPolls) {
+        clearInterval(pollInterval);
+        if (!isAuthenticated()) {
+          setLoading(false);
+        }
+      }
+    }, 200);
+
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('authStateChanged', handleCustomStorageChange);
+      clearInterval(pollInterval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mounted, periods.length, loading]);
 
   return (
     <PayrollPeriodContext.Provider

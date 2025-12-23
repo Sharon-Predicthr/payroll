@@ -13,7 +13,10 @@
     "build": "npm run build:backend && npm run build:frontend",
     "build:backend": "cd backend && npm run build",
     "build:frontend": "cd frontend && npm run build",
-    "install:all": "npm install && cd backend && npm install && cd ../frontend && npm install"
+    "install:all": "npm install && cd backend && npm install && cd ../frontend && npm install",
+    "expose:frontend": "ngrok http 3000",
+    "expose:backend": "ngrok http 4000",
+    "expose:all": "echo 'Run in separate terminals: npm run expose:frontend and npm run expose:backend'"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

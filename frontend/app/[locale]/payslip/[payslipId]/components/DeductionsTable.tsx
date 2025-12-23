@@ -7,9 +7,15 @@ interface DeductionItem {
 
 interface DeductionsTableProps {
   deductions: DeductionItem[];
+  title?: string;
+  showTotal?: boolean;
 }
 
-export function DeductionsTable({ deductions }: DeductionsTableProps) {
+export function DeductionsTable({ 
+  deductions, 
+  title = "ניכויים",
+  showTotal = true 
+}: DeductionsTableProps) {
   const total = deductions.reduce((sum, item) => sum + item.amount, 0);
 
   const formatNumber = (num: number) => {
@@ -19,9 +25,13 @@ export function DeductionsTable({ deductions }: DeductionsTableProps) {
     }).format(num);
   };
 
+  if (deductions.length === 0) {
+    return null;
+  }
+
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-      <h2 className="text-xl font-semibold text-gray-900 mb-4">ניכויים</h2>
+      <h2 className="text-xl font-semibold text-gray-900 mb-4">{title}</h2>
 
       <div className="overflow-x-auto">
         <table className="w-full">
@@ -41,16 +51,18 @@ export function DeductionsTable({ deductions }: DeductionsTableProps) {
               </tr>
             ))}
           </tbody>
-          <tfoot>
-            <tr className="bg-gray-50 border-t-2 border-gray-300">
-              <td className="text-right py-3 px-4 text-sm font-semibold text-gray-900">
-                סה״כ ניכויים
-              </td>
-              <td className="text-left py-3 px-4 text-sm font-bold text-gray-900 font-mono">
-                ₪{formatNumber(total)}
-              </td>
-            </tr>
-          </tfoot>
+          {showTotal && (
+            <tfoot>
+              <tr className="bg-gray-50 border-t-2 border-gray-300">
+                <td className="text-right py-3 px-4 text-sm font-semibold text-gray-900">
+                  סה״כ {title}
+                </td>
+                <td className="text-left py-3 px-4 text-sm font-bold text-gray-900 font-mono">
+                  ₪{formatNumber(total)}
+                </td>
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div>
     </div>

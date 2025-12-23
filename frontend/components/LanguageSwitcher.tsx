@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useLocale } from 'next-intl';
 import { useRouter, usePathname } from 'next/navigation';
-import { locales, localeNames, type Locale } from '@/i18n';
+import { locales, localeNames, localeDirection, type Locale } from '@/i18n';
 import { useDirection } from '@/contexts/DirectionContext';
 
 export function LanguageSwitcher() {
@@ -37,10 +37,20 @@ export function LanguageSwitcher() {
       pathWithoutLocale = '/';
     }
     
-    // Navigate to new locale
+    // Navigate to new locale - use window.location for full page reload
     const newPath = pathWithoutLocale === '/' ? `/${newLocale}` : `/${newLocale}${pathWithoutLocale}`;
-    router.push(newPath);
-    router.refresh();
+    
+    // Update direction context based on new locale
+    const newDirection = localeDirection[newLocale] || 'ltr';
+    setDirection(newDirection);
+    
+    // Use window.location for full page reload to ensure locale change is applied
+    if (typeof window !== 'undefined') {
+      window.location.href = newPath;
+    } else {
+      router.push(newPath);
+      router.refresh();
+    }
   };
 
   const [isOpen, setIsOpen] = useState(false);

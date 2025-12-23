@@ -82,7 +82,9 @@ export class PayslipResponseDto {
   company: PayslipCompanyDto;
   employee: PayslipEmployeeDto;
   earnings: PayslipEarningDto[];
-  deductions: PayslipDeductionDto[];
+  deductions: PayslipDeductionDto[]; // For backward compatibility
+  mandatory_deductions?: PayslipDeductionDto[]; // Mandatory deductions (item_type IN ('2-DEDUCTION', '3-INSURANCE', '4-KH-EDUCATION'))
+  personal_deductions?: PayslipDeductionDto[]; // Personal/Optional deductions (item_type = '5-DEDUCTION')
   totals: PayslipTotalsDto;
   attendance: PayslipAttendanceDto;
   balances: PayslipBalancesDto;
