@@ -12,6 +12,7 @@ interface PayslipHeaderProps {
   onDownloadPDF: () => void;
   onPrint: () => void;
   onBack: () => void;
+  downloadingPDF?: boolean;
 }
 
 export function PayslipHeader({

@@ -1,0 +1,52 @@
+﻿========================================
+SSMS CONNECTION GUIDE
+========================================
+
+Step 1: Open SSMS
+- Launch SQL Server Management Studio
+
+Step 2: Connect to Server Dialog
+- Server type: Database Engine
+- Server name: EXACTLY: localhost,1434
+  (Important: Use comma, not colon!)
+- Authentication: SQL Server Authentication
+- Login: sa
+- Password: YourStrong@Passw0rd
+
+Step 3: Click 'Options >>'
+- Go to 'Connection Properties' tab
+- Network protocol: TCP/IP
+- Connection timeout: 30
+- Encrypt connection: (can be checked or unchecked)
+
+Step 4: Click 'Connect'
+
+ALTERNATIVE METHODS if above doesn't work:
+
+Method A - IP Address:
+  Server name: 127.0.0.1,1434
+
+Method B - With Instance Name:
+  Server name: localhost\SQLEXPRESS,1434
+  (if you have local SQL Server)
+
+Method C - Using Connection String:
+  In SSMS, try: tcp:localhost,1434
+
+TROUBLESHOOTING:
+- If you get 'Cannot connect', check:
+  1. Docker container is running: docker ps
+  2. Port is accessible: Test-NetConnection localhost -Port 1434
+  3. Password is correct: YourStrong@Passw0rd (case sensitive)
+  4. No firewall blocking port 1434
+
+- If you get 'Login failed':
+  1. Make sure you're using SQL Server Authentication (not Windows)
+  2. Check password spelling: YourStrong@Passw0rd
+  3. Try resetting password in container
+
+- If connection times out:
+  1. Increase connection timeout to 60 seconds
+  2. Check if port 1434 is blocked by firewall
+  3. Try using 127.0.0.1 instead of localhost
+

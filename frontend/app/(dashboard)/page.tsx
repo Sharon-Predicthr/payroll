@@ -1,7 +1,12 @@
 "use client";
 
+// Force dynamic rendering to prevent static generation errors
+export const dynamic = 'force-dynamic';
+
 import { useState } from "react";
 import { PageShell } from "@/components/PageShell";
+import { DirectionProvider } from "@/contexts/DirectionContext";
+import { PayrollPeriodProvider } from "@/contexts/PayrollPeriodContext";
 
 export default function DashboardPage() {
   const [selectedTimeRange, setSelectedTimeRange] = useState("1M");
@@ -32,8 +37,10 @@ export default function DashboardPage() {
   ];
 
   return (
-    <PageShell>
-      <div className="space-y-6">
+    <DirectionProvider locale="en">
+      <PayrollPeriodProvider>
+        <PageShell>
+          <div className="space-y-6">
         {/* 2-Column Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-10 gap-6">
           {/* Left Column (70%) */}
@@ -314,6 +321,8 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
-    </PageShell>
+        </PageShell>
+      </PayrollPeriodProvider>
+    </DirectionProvider>
   );
 }

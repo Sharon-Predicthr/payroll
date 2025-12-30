@@ -8,7 +8,7 @@ import { PageShell } from "@/components/PageShell";
 import { OrgTree } from "./components/OrgTree";
 import { OrgDetailsPanel } from "./components/OrgDetailsPanel";
 import { CreateUnitDialog } from "./components/CreateUnitDialog";
-import { useOrgData } from "./hooks/useOrgData";
+import { useOrgData, OrgUnit } from "./hooks/useOrgData";
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
 import { getAuthHeader } from "@/lib/auth";

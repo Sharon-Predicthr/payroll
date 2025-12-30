@@ -82,8 +82,13 @@ export function DirectionProvider({
 
 export function useDirection() {
   const context = useContext(DirectionContext);
+  // Return default values if provider is not available (e.g., during static generation)
   if (context === undefined) {
-    throw new Error("useDirection must be used within a DirectionProvider");
+    return {
+      direction: 'ltr' as Direction,
+      toggleDirection: () => {},
+      setDirection: () => {},
+    };
   }
   return context;
 }

@@ -96,7 +96,7 @@ export class AuthService {
     // 3. מציאת ה-Tenants של המשתמש
     const tenantResult = await pool
       .request()
-      .input('userId', sql.UniqueIdentifier, user.id)
+      .input('userId', sql.Int, user.id)
       .query(
         `SELECT t.*, l.role
          FROM tenants t

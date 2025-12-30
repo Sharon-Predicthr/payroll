@@ -1,0 +1,20 @@
+# Development Dockerfile for Backend
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install all dependencies (including dev)
+RUN npm install
+
+# Expose port
+EXPOSE 4000
+
+# Start in development mode (with watch)
+CMD ["npm", "run", "start:dev"]
+
+
+
+

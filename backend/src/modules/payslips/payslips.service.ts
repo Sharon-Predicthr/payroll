@@ -110,6 +110,38 @@ export class PayslipsService extends BaseTenantService {
         }
       }
       
+      // Add ALL additional fields from clc_payslips for additional_data
+      // These will be used by getAdditionalPayslipData
+      const additionalFields = [
+        // General Information fields
+        'department_number', 'employee_address', 'employee_national_id',
+        'tariff_monthly', 'tariff_daily', 'tariff_hourly',
+        'start_of_work', 'seniority_years', 'seniority_months',
+        'job_pct', 'partial_period_pct', 'tax_credit_points', 'tax_pct_level',
+        'ytd_months_of_work', 'total_months_worked',
+        // Monthly Tax Information fields
+        'severance_monthly', 'severance_gross_monthly',
+        'kpg_employer_monthly', 'kpg_gross_monthly',
+        'khs_employer_monthly', 'khs_gross_monthly',
+        'city_tax_credit_month', 'seif_47_exempt_month', 'shovi_monthly',
+        // Yearly/Accumulated Information fields
+        'ytd_gross_payments', 'ytd_shovi', 'ytd_gross_for_tax', 'ytd_tax',
+        'ytd_bl_employee', 'ytd_bl_employer',
+        'ytd_health_employee', 'ytd_health_employer',
+        'ytd_35_tax_exempt', 'ytd_khs_employer', 'ytd_khs_employee',
+        'ytd_47_tax_deduction', 'ytd_pension_employer', 'ytd_pension_employee',
+        'ytd_severance_employer',
+        // Additional YTD fields that might exist
+        'ytd_credit_points_amount', 'ytd_city_tax_credit', 'ytd_total_tax_credit'
+      ];
+      
+      for (const field of additionalFields) {
+        if (availableColumns.includes(field) && !addedFields.has(field)) {
+          selectFields.push(field);
+          addedFields.add(field);
+        }
+      }
+      
       // Add generation_date or created_date if available
       if (availableColumns.includes('generation_date')) {
         selectFields.push('generation_date');
@@ -157,17 +189,22 @@ export class PayslipsService extends BaseTenantService {
         request.input('employeeId', sql.NVarChar, employeeId);
       }
 
-      const payslipResult = await request.query(`
-        SELECT ${selectFields.join(', ')}
-        FROM clc_payslips
-        WHERE ${whereClause}
-      `);
+      const selectQuery = `SELECT ${selectFields.join(', ')} FROM clc_payslips WHERE ${whereClause}`;
+      this.logger.log(`[getPayslip] SELECT query fields: ${selectFields.length} fields`);
+      this.logger.log(`[getPayslip] SELECT includes YTD fields: ytd_gross_payments=${selectFields.includes('ytd_gross_payments')}, ytd_tax=${selectFields.includes('ytd_tax')}, ytd_health_employee=${selectFields.includes('ytd_health_employee')}`);
+      this.logger.log(`[getPayslip] About to execute SELECT query for period: ${periodId}, employee: ${employeeId || 'ALL'}`);
+      
+      const payslipResult = await request.query(selectQuery);
+      this.logger.log(`[getPayslip] SELECT query executed, returned ${payslipResult.recordset.length} rows`);
 
       if (payslipResult.recordset.length === 0) {
         throw new NotFoundException(`Payslip ${payslipId} not found`);
       }
 
       const payslip = payslipResult.recordset[0];
+      this.logger.log(`[getPayslip] Payslip object keys after SELECT: ${Object.keys(payslip).join(', ')}`);
+      this.logger.log(`[getPayslip] Sample YTD fields: ytd_gross_payments=${payslip.ytd_gross_payments}, ytd_tax=${payslip.ytd_tax}, ytd_health_employee=${payslip.ytd_health_employee}`);
+      this.logger.log(`[getPayslip] Reached line 205, about to check user permissions`);
 
       if (userRole === 'EMPLOYEE' && payslip.employee_id !== userId) {
         throw new ForbiddenException('Access denied: You can only view your own payslips');
@@ -304,7 +341,23 @@ export class PayslipsService extends BaseTenantService {
       const canEdit = userRole === 'PAYROLL_MANAGER';
       const canDownloadPDF = true;
 
-      return {
+      // Get additional data from clc_payslips and related tables
+      let additionalData: any = {};
+      this.logger.log(`[getPayslip] Reached line 342, about to fetch additional data`);
+      this.logger.log(`[getPayslip] About to call getAdditionalPayslipData for employee: ${employeeId || payslip.employee_id}, period: ${payslip.period_id}`);
+      try {
+        additionalData = await this.getAdditionalPayslipData(pool, payslip, employeeId || payslip.employee_id, tenantCode);
+        this.logger.log(`[getPayslip] Additional data fetched successfully:`, JSON.stringify(additionalData, null, 2));
+        this.logger.log(`[getPayslip] Additional data has yearly_accumulated_info: ${!!additionalData?.yearly_accumulated_info}`);
+        if (additionalData?.yearly_accumulated_info) {
+          this.logger.log(`[getPayslip] Yearly info keys: ${Object.keys(additionalData.yearly_accumulated_info).join(', ')}`);
+        }
+      } catch (error: any) {
+        this.logger.error(`[getPayslip] ERROR fetching additional payslip data: ${error.message}`, error.stack);
+        // Continue without additional data instead of failing the entire request
+      }
+
+      const result = {
         payslip: {
           id: payslip.id,
           month: month || 1,
@@ -339,11 +392,19 @@ export class PayslipsService extends BaseTenantService {
           absence_days: 0, // Not available in clc_payslips
         },
         balances,
+        additional_data: additionalData,
         permissions: {
           can_edit: canEdit,
           can_download_pdf: canDownloadPDF,
         },
       };
+      
+      this.logger.log(`[getPayslip] Returning result with additional_data: ${!!result.additional_data}`);
+      if (result.additional_data && (result.additional_data as any).yearly_accumulated_info) {
+        this.logger.log(`[getPayslip] Result has yearly_accumulated_info with ${Object.keys((result.additional_data as any).yearly_accumulated_info).length} keys`);
+      }
+      
+      return result;
     } catch (error) {
       this.logger.error(`Failed to get payslip ${payslipId}:`, error);
       throw error;
@@ -426,6 +487,381 @@ export class PayslipsService extends BaseTenantService {
     } catch (error) {
       this.logger.error(`Failed to get latest payslip for employee ${employeeId}:`, error);
       throw error;
+    }
+  }
+
+  /**
+   * Get additional payslip data from clc_payslips and related tables
+   */
+  private async getAdditionalPayslipData(
+    pool: sql.ConnectionPool,
+    payslip: any,
+    employeeId: string,
+    tenantCode: string,
+  ): Promise<any> {
+    this.logger.log(`[getAdditionalPayslipData] ========== START getAdditionalPayslipData ==========`);
+    this.logger.log(`[getAdditionalPayslipData] Called with employeeId: ${employeeId}, period: ${payslip.period_id}, tenant: ${tenantCode}`);
+    
+    // Initialize result object early so we can return partial data even if there are errors
+    const generalInfo: any = {};
+    const monthlyTaxInfo: any = {};
+    const yearlyInfo: any = {};
+    
+    try {
+      // Check available columns in clc_payslips
+      const payslipColsResult = await pool
+        .request()
+        .query(`
+          SELECT COLUMN_NAME
+          FROM INFORMATION_SCHEMA.COLUMNS
+          WHERE TABLE_NAME = 'clc_payslips'
+            AND TABLE_SCHEMA = SCHEMA_NAME()
+        `);
+      const payslipCols = payslipColsResult.recordset.map((r: any) => r.COLUMN_NAME);
+      
+      // Log available columns for debugging
+      this.logger.log(`[getAdditionalPayslipData] Available columns in clc_payslips: ${payslipCols.length} columns`);
+      this.logger.log(`[getAdditionalPayslipData] Payslip object keys: ${Object.keys(payslip).join(', ')}`);
+      
+      // Re-fetch payslip with ALL additional columns if they're not in the payslip object
+      // This ensures we have all the data we need
+      const additionalColumns = [
+        'department_number', 'employee_address', 'employee_national_id',
+        'tariff_monthly', 'tariff_daily', 'tariff_hourly',
+        'start_of_work', 'seniority_years', 'seniority_months',
+        'job_pct', 'partial_period_pct', 'tax_credit_points', 'tax_pct_level',
+        'ytd_months_of_work', 'total_months_worked',
+        'severance_monthly', 'severance_gross_monthly',
+        'kpg_employer_monthly', 'kpg_gross_monthly',
+        'khs_employer_monthly', 'khs_gross_monthly',
+        'city_tax_credit_month', 'seif_47_exempt_month', 'shovi_monthly',
+        'ytd_gross_payments', 'ytd_shovi', 'ytd_gross_for_tax', 'ytd_tax',
+        'ytd_bl_employee', 'ytd_bl_employer',
+        'ytd_health_employee', 'ytd_health_employer',
+        'ytd_35_tax_exempt', 'ytd_khs_employer', 'ytd_khs_employee',
+        'ytd_47_tax_deduction', 'ytd_pension_employer', 'ytd_pension_employee',
+        'ytd_severance_employer',
+        'ytd_credit_points_amount', 'ytd_city_tax_credit', 'ytd_total_tax_credit'
+      ];
+      
+      // Check which additional columns are missing from payslip object
+      const missingColumns = additionalColumns.filter(col => 
+        payslipCols.includes(col) && payslip[col] === undefined
+      );
+      
+      // If there are missing columns, fetch them directly from the database
+      if (missingColumns.length > 0) {
+        this.logger.log(`[getAdditionalPayslipData] Missing columns in payslip object: ${missingColumns.join(', ')}`);
+        this.logger.log(`[getAdditionalPayslipData] Re-fetching missing columns from database...`);
+        
+        const missingSelectFields = missingColumns.map(col => col).join(', ');
+        const refetchResult = await pool
+          .request()
+          .input('periodId', sql.NVarChar, payslip.period_id)
+          .input('employeeId', sql.NVarChar, employeeId)
+          .input('clientId', sql.NVarChar, tenantCode)
+          .query(`
+            SELECT ${missingSelectFields}
+            FROM clc_payslips
+            WHERE period_id = @periodId 
+              AND employee_id = @employeeId 
+              AND client_id = @clientId
+          `);
+        
+        if (refetchResult.recordset.length > 0) {
+          // Merge missing columns into payslip object
+          const missingData = refetchResult.recordset[0];
+          for (const col of missingColumns) {
+            if (missingData[col] !== undefined) {
+              payslip[col] = missingData[col];
+            }
+          }
+          this.logger.log(`[getAdditionalPayslipData] Successfully fetched ${missingColumns.length} missing columns`);
+        }
+      }
+
+      // Check available columns in related tables
+      const [deptColsResult, contractColsResult, clientColsResult, bankDetailColsResult] = await Promise.all([
+        pool.request().query(`SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'departments' AND TABLE_SCHEMA = SCHEMA_NAME()`).catch(() => ({ recordset: [] })),
+        pool.request().query(`SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'employees_contracts' AND TABLE_SCHEMA = SCHEMA_NAME()`).catch(() => ({ recordset: [] })),
+        pool.request().query(`SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'clients' AND TABLE_SCHEMA = SCHEMA_NAME()`).catch(() => ({ recordset: [] })),
+        pool.request().query(`SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'employees_bank_details' AND TABLE_SCHEMA = SCHEMA_NAME()`).catch(() => ({ recordset: [] })),
+      ]);
+
+      const deptCols = deptColsResult.recordset.map((r: any) => r.COLUMN_NAME);
+      const contractCols = contractColsResult.recordset.map((r: any) => r.COLUMN_NAME);
+      const clientCols = clientColsResult.recordset.map((r: any) => r.COLUMN_NAME);
+      const bankDetailCols = bankDetailColsResult.recordset.map((r: any) => r.COLUMN_NAME);
+
+      // Build General Information (generalInfo already initialized above)
+      
+      // Helper function to safely get value from payslip
+      const getPayslipValue = (columnName: string, parseAsFloat: boolean = false): any => {
+        if (!payslipCols.includes(columnName)) {
+          return null;
+        }
+        const value = payslip[columnName];
+        if (value === null || value === undefined || value === '') {
+          return null;
+        }
+        return parseAsFloat ? parseFloat(value) : value;
+      };
+      
+      if (payslipCols.includes('department_number')) {
+        generalInfo.department_number = getPayslipValue('department_number');
+        this.logger.log(`[getAdditionalPayslipData] department_number value: ${generalInfo.department_number}, type: ${typeof generalInfo.department_number}`);
+        
+        // Get department name
+        if (deptCols.length > 0 && generalInfo.department_number !== null && generalInfo.department_number !== undefined && generalInfo.department_number !== '') {
+          try {
+            const deptHasClientId = deptCols.includes('client_id');
+            // Convert to string and handle edge cases
+            let deptNumStr: string;
+            if (typeof generalInfo.department_number === 'number') {
+              deptNumStr = generalInfo.department_number.toString();
+            } else if (typeof generalInfo.department_number === 'string') {
+              deptNumStr = generalInfo.department_number.trim();
+            } else {
+              deptNumStr = String(generalInfo.department_number || '').trim();
+            }
+            
+            // Skip if empty string after conversion
+            if (!deptNumStr || deptNumStr === '') {
+              this.logger.warn(`[getAdditionalPayslipData] department_number is empty after conversion, skipping department query`);
+            } else {
+              this.logger.log(`[getAdditionalPayslipData] Querying department with deptNumStr: "${deptNumStr}"`);
+              const whereClause = deptHasClientId 
+                ? 'department_number = @deptNum AND client_id = @clientId'
+                : 'department_number = @deptNum';
+              
+              const deptRequest = pool.request().input('deptNum', sql.NVarChar(255), deptNumStr);
+              if (deptHasClientId) {
+                deptRequest.input('clientId', sql.NVarChar(255), tenantCode);
+              }
+              
+              const deptResult = await deptRequest.query(`
+                SELECT TOP 1 ${deptCols.includes('department_name') ? 'department_name' : "'' as department_name"}
+                FROM departments
+                WHERE ${whereClause}
+              `);
+              
+              if (deptResult.recordset.length > 0) {
+                generalInfo.department_name = deptResult.recordset[0].department_name || null;
+                this.logger.log(`[getAdditionalPayslipData] Found department_name: ${generalInfo.department_name}`);
+              }
+            }
+          } catch (error: any) {
+            this.logger.warn(`[getAdditionalPayslipData] Error fetching department name: ${error.message}`, error.stack);
+            // Continue without department name
+          }
+        }
+      }
+
+      // Employee address and national ID from payslip
+      generalInfo.employee_address = getPayslipValue('employee_address');
+      generalInfo.employee_national_id = getPayslipValue('employee_national_id');
+
+      // Tariff fields
+      generalInfo.tariff_monthly = getPayslipValue('tariff_monthly', true);
+      generalInfo.tariff_daily = getPayslipValue('tariff_daily', true);
+      generalInfo.tariff_hourly = getPayslipValue('tariff_hourly', true);
+
+      // Standard hours per month from employees_contracts
+      if (contractCols.length > 0) {
+        try {
+          const contractHasClientId = contractCols.includes('client_id');
+          const contractWhereClause = contractHasClientId 
+            ? 'employee_id = @empId AND client_id = @clientId'
+            : 'employee_id = @empId';
+          const isActiveClause = contractCols.includes('is_active') ? 'AND is_active = 1' : '';
+          
+          const contractRequest = pool.request().input('empId', sql.NVarChar, String(employeeId));
+          if (contractHasClientId) {
+            contractRequest.input('clientId', sql.NVarChar, tenantCode);
+          }
+          
+          const contractResult = await contractRequest.query(`
+            SELECT TOP 1 ${contractCols.includes('standard_hours_per_month') ? 'standard_hours_per_month' : 'NULL as standard_hours_per_month'}
+            FROM employees_contracts
+            WHERE ${contractWhereClause} ${isActiveClause}
+          `);
+          
+          if (contractResult.recordset.length > 0 && contractResult.recordset[0].standard_hours_per_month) {
+            generalInfo.standard_hours_per_month = parseFloat(contractResult.recordset[0].standard_hours_per_month) || null;
+          }
+        } catch (error: any) {
+          this.logger.warn(`[getAdditionalPayslipData] Error fetching standard hours: ${error.message}`);
+          // Continue without standard hours
+        }
+      }
+
+      // Start of work, seniority, job_pct, partial_period_pct from payslip
+      const startOfWork = getPayslipValue('start_of_work');
+      if (startOfWork) {
+        generalInfo.start_of_work = startOfWork instanceof Date ? startOfWork.toISOString() : (typeof startOfWork === 'string' ? startOfWork : null);
+      }
+      generalInfo.seniority_years = getPayslipValue('seniority_years', true);
+      generalInfo.seniority_months = getPayslipValue('seniority_months', true);
+      generalInfo.job_pct = getPayslipValue('job_pct', true);
+      generalInfo.partial_period_pct = getPayslipValue('partial_period_pct', true);
+      generalInfo.tax_credit_points = getPayslipValue('tax_credit_points', true);
+      generalInfo.tax_pct_level = getPayslipValue('tax_pct_level', true);
+      generalInfo.ytd_months_of_work = getPayslipValue('ytd_months_of_work', true) || getPayslipValue('total_months_worked', true);
+
+      // Client info (employer tax file number, employer national insurance number)
+      if (clientCols.length > 0) {
+        try {
+          const clientHasClientId = clientCols.includes('client_id');
+          const clientWhereClause = clientHasClientId 
+            ? 'client_id = @clientId'
+            : '1=1';
+          
+          const clientRequest = pool.request();
+          if (clientHasClientId) {
+            clientRequest.input('clientId', sql.NVarChar, tenantCode);
+          }
+          
+          const clientResult = await clientRequest.query(`
+            SELECT TOP 1 
+              ${clientCols.includes('tax_file_number') ? 'tax_file_number' : 'NULL as tax_file_number'},
+              ${clientCols.includes('national_s_employer_number') ? 'national_s_employer_number' : 'NULL as national_s_employer_number'}
+            FROM clients
+            WHERE ${clientWhereClause}
+          `);
+          
+          if (clientResult.recordset.length > 0) {
+            if (clientResult.recordset[0].tax_file_number) {
+              generalInfo.employer_tax_file_number = clientResult.recordset[0].tax_file_number || null;
+            }
+            if (clientResult.recordset[0].national_s_employer_number) {
+              generalInfo.employer_national_insurance_number = clientResult.recordset[0].national_s_employer_number || null;
+            }
+          }
+        } catch (error: any) {
+          this.logger.warn(`[getAdditionalPayslipData] Error fetching client info: ${error.message}`);
+          // Continue without client info
+        }
+      }
+
+      // Bank details
+      if (bankDetailCols.length > 0) {
+        try {
+          const bankDetailHasClientId = bankDetailCols.includes('client_id');
+          const bankDetailWhereClause = bankDetailHasClientId 
+            ? 'employee_id = @empId AND client_id = @clientId'
+            : 'employee_id = @empId';
+          const isPrimaryClause = bankDetailCols.includes('is_primary') ? 'AND is_primary = 1' : '';
+          
+          const bankRequest = pool.request().input('empId', sql.NVarChar, String(employeeId));
+          if (bankDetailHasClientId) {
+            bankRequest.input('clientId', sql.NVarChar, tenantCode);
+          }
+          
+          const bankResult = await bankRequest.query(`
+            SELECT TOP 1
+              ${bankDetailCols.includes('bank_code') ? 'bank_code' : 'NULL as bank_code'},
+              ${bankDetailCols.includes('branch_code') ? 'branch_code' : 'NULL as branch_code'},
+              ${bankDetailCols.includes('account_number') ? 'account_number' : 'NULL as account_number'}
+            FROM employees_bank_details
+            WHERE ${bankDetailWhereClause} ${isPrimaryClause}
+          `);
+          
+          if (bankResult.recordset.length > 0) {
+            if (bankResult.recordset[0].bank_code) {
+              generalInfo.bank_code = bankResult.recordset[0].bank_code || null;
+            }
+            if (bankResult.recordset[0].branch_code) {
+              generalInfo.branch_code = bankResult.recordset[0].branch_code || null;
+            }
+            if (bankResult.recordset[0].account_number) {
+              generalInfo.account_number = bankResult.recordset[0].account_number || null;
+            }
+          }
+        } catch (error: any) {
+          this.logger.warn(`[getAdditionalPayslipData] Error fetching bank details: ${error.message}`);
+          // Continue without bank details
+        }
+      }
+
+      // Build Monthly Tax Information (monthlyTaxInfo already initialized above)
+      monthlyTaxInfo.tax_credit_points = getPayslipValue('tax_credit_points', true);
+      monthlyTaxInfo.tax_pct_level = getPayslipValue('tax_pct_level', true);
+      monthlyTaxInfo.severance_monthly = getPayslipValue('severance_monthly', true);
+      monthlyTaxInfo.severance_gross_monthly = getPayslipValue('severance_gross_monthly', true);
+      monthlyTaxInfo.kpg_employer_monthly = getPayslipValue('kpg_employer_monthly', true);
+      monthlyTaxInfo.kpg_gross_monthly = getPayslipValue('kpg_gross_monthly', true);
+      monthlyTaxInfo.khs_employer_monthly = getPayslipValue('khs_employer_monthly', true);
+      monthlyTaxInfo.khs_gross_monthly = getPayslipValue('khs_gross_monthly', true);
+      monthlyTaxInfo.city_tax_credit_month = getPayslipValue('city_tax_credit_month', true);
+      monthlyTaxInfo.seif_47_exempt_month = getPayslipValue('seif_47_exempt_month', true);
+      monthlyTaxInfo.shovi_monthly = getPayslipValue('shovi_monthly', true);
+
+      // Build Yearly/Accumulated Information (yearlyInfo already initialized above)
+      yearlyInfo.ytd_gross_payments = getPayslipValue('ytd_gross_payments', true);
+      yearlyInfo.ytd_shovi = getPayslipValue('ytd_shovi', true);
+      yearlyInfo.ytd_gross_for_tax = getPayslipValue('ytd_gross_for_tax', true);
+      yearlyInfo.ytd_tax = getPayslipValue('ytd_tax', true);
+      yearlyInfo.ytd_bl_employee = getPayslipValue('ytd_bl_employee', true);
+      yearlyInfo.ytd_bl_employer = getPayslipValue('ytd_bl_employer', true);
+      yearlyInfo.ytd_health_employee = getPayslipValue('ytd_health_employee', true);
+      yearlyInfo.ytd_health_employer = getPayslipValue('ytd_health_employer', true);
+      yearlyInfo.ytd_35_tax_exempt = getPayslipValue('ytd_35_tax_exempt', true);
+      yearlyInfo.ytd_khs_employer = getPayslipValue('ytd_khs_employer', true);
+      yearlyInfo.ytd_khs_employee = getPayslipValue('ytd_khs_employee', true);
+      yearlyInfo.ytd_47_tax_deduction = getPayslipValue('ytd_47_tax_deduction', true);
+      yearlyInfo.ytd_pension_employer = getPayslipValue('ytd_pension_employer', true);
+      yearlyInfo.ytd_pension_employee = getPayslipValue('ytd_pension_employee', true);
+      yearlyInfo.ytd_severance_employer = getPayslipValue('ytd_severance_employer', true);
+      // Additional YTD fields that might exist with different names
+      yearlyInfo.ytd_credit_points_amount = getPayslipValue('ytd_credit_points_amount', true);
+      yearlyInfo.ytd_city_tax_credit = getPayslipValue('ytd_city_tax_credit', true);
+      yearlyInfo.ytd_total_tax_credit = getPayslipValue('ytd_total_tax_credit', true);
+
+      // Keep all values, including null, so the frontend can display all fields
+      // Only remove completely undefined values
+      const cleanGeneralInfo = Object.fromEntries(
+        Object.entries(generalInfo).filter(([_, v]) => v !== undefined)
+      );
+      const cleanMonthlyTaxInfo = Object.fromEntries(
+        Object.entries(monthlyTaxInfo).filter(([_, v]) => v !== undefined)
+      );
+      const cleanYearlyInfo = Object.fromEntries(
+        Object.entries(yearlyInfo).filter(([_, v]) => v !== undefined)
+      );
+
+      const result = {
+        general_info: Object.keys(cleanGeneralInfo).length > 0 ? cleanGeneralInfo : undefined,
+        monthly_tax_info: Object.keys(cleanMonthlyTaxInfo).length > 0 ? cleanMonthlyTaxInfo : undefined,
+        yearly_accumulated_info: Object.keys(cleanYearlyInfo).length > 0 ? cleanYearlyInfo : undefined,
+      };
+      
+      this.logger.log(`[getAdditionalPayslipData] Returning additional data:`, JSON.stringify(result, null, 2));
+      this.logger.log(`[getAdditionalPayslipData] Yearly info keys: ${Object.keys(cleanYearlyInfo).join(', ')}`);
+      this.logger.log(`[getAdditionalPayslipData] Yearly info values:`, JSON.stringify(cleanYearlyInfo, null, 2));
+      
+      return result;
+    } catch (error: any) {
+      this.logger.warn(`[getAdditionalPayslipData] Error fetching additional data: ${error.message}`, error.stack);
+      // Return partial data that was collected before the error
+      // Clean the data that was collected
+      const cleanGeneralInfo = Object.fromEntries(
+        Object.entries(generalInfo).filter(([_, v]) => v !== undefined)
+      );
+      const cleanMonthlyTaxInfo = Object.fromEntries(
+        Object.entries(monthlyTaxInfo).filter(([_, v]) => v !== undefined)
+      );
+      const cleanYearlyInfo = Object.fromEntries(
+        Object.entries(yearlyInfo).filter(([_, v]) => v !== undefined)
+      );
+      
+      const partialResult = {
+        general_info: Object.keys(cleanGeneralInfo).length > 0 ? cleanGeneralInfo : undefined,
+        monthly_tax_info: Object.keys(cleanMonthlyTaxInfo).length > 0 ? cleanMonthlyTaxInfo : undefined,
+        yearly_accumulated_info: Object.keys(cleanYearlyInfo).length > 0 ? cleanYearlyInfo : undefined,
+      };
+      
+      this.logger.log(`[getAdditionalPayslipData] Returning partial data after error:`, JSON.stringify(partialResult, null, 2));
+      return partialResult;
     }
   }
 

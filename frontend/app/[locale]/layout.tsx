@@ -1,4 +1,3 @@
-import { Inter, Noto_Sans_Hebrew, Noto_Sans_Arabic } from "next/font/google";
 import { NextIntlClientProvider } from 'next-intl';
 import { getMessages } from 'next-intl/server';
 import { notFound } from 'next/navigation';
@@ -6,27 +5,12 @@ import { locales, type Locale } from '@/i18n';
 import { DirectionProvider } from "@/contexts/DirectionContext";
 import { PayrollPeriodProvider } from "@/contexts/PayrollPeriodContext";
 
-const inter = Inter({ 
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-inter",
-});
+// Fonts are loaded via CSS in globals.css to avoid build-time network dependency
+// This allows Docker builds to succeed without internet access
 
-const notoSansHebrew = Noto_Sans_Hebrew({
-  subsets: ["hebrew"],
-  display: "swap",
-  variable: "--font-hebrew",
-});
-
-const notoSansArabic = Noto_Sans_Arabic({
-  subsets: ["arabic"],
-  display: "swap",
-  variable: "--font-arabic",
-});
-
-export function generateStaticParams() {
-  return locales.map((locale) => ({ locale }));
-}
+// Force dynamic rendering to avoid static generation issues with next-intl
+// This prevents Next.js from trying to statically generate pages that use headers
+export const dynamic = 'force-dynamic';
 
 export default async function LocaleLayout({
   children,
@@ -59,15 +43,8 @@ export default async function LocaleLayout({
     messages = {};
   }
 
-  // Determine font variable based on locale
-  const fontVariable = locale === 'he' 
-    ? notoSansHebrew.variable 
-    : locale === 'ar' 
-    ? notoSansArabic.variable 
-    : inter.variable;
-
   return (
-    <div className={`${inter.variable} ${notoSansHebrew.variable} ${notoSansArabic.variable}`}>
+    <div>
       <NextIntlClientProvider messages={messages}>
         <DirectionProvider locale={locale}>
           <PayrollPeriodProvider>
@@ -78,4 +55,3 @@ export default async function LocaleLayout({
     </div>
   );
 }
-

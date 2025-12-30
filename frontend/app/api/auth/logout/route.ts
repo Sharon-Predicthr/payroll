@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+// Force dynamic rendering (this route accesses request.headers)
+export const dynamic = 'force-dynamic';
+
 export async function POST(request: NextRequest) {
   try {
     const authHeader = request.headers.get('authorization');
@@ -15,17 +18,6 @@ export async function POST(request: NextRequest) {
     // The backend logout endpoint might not exist or might be causing connection issues
     // So we'll handle logout client-side only
     return NextResponse.json({ success: true, message: 'Logged out successfully' });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      return NextResponse.json(
-        { message: data.message || 'Logout failed' },
-        { status: response.status }
-      );
-    }
-
-    return NextResponse.json(data);
   } catch (error: any) {
     console.error('Logout API route error:', error);
     return NextResponse.json(

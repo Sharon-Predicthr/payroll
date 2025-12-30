@@ -10,6 +10,7 @@ interface PageShellProps {
 }
 
 export function PageShell({ children }: PageShellProps) {
+  // useDirection now returns default values if provider is not available
   const { direction } = useDirection();
   const [mounted, setMounted] = useState(false);
 

@@ -162,9 +162,8 @@ export function EmployeeTable({ unitId, onRefresh }: EmployeeTableProps) {
               <td className="py-3 px-4">
                 <Button
                   variant="ghost"
-                  className="h-8 px-3 text-xs"
+                  className="h-8 px-3 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
                   onClick={() => handleRemove(emp.employee_id)}
-                  className="text-red-600 hover:text-red-700 hover:bg-red-50"
                 >
                   <Trash2 className="w-4 h-4" />
                 </Button>

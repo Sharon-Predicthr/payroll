@@ -27,6 +27,21 @@ export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
   private controlPool: sql.ConnectionPool;
 
+  /**
+   * Helper method to determine the correct SQL type for user_id
+   * and convert the value if needed
+   */
+  private getUserIdParam(userId: string): { type: any; value: any } {
+    // Check if userId is numeric (Int) or GUID (UniqueIdentifier)
+    if (/^\d+$/.test(userId)) {
+      return { type: sql.Int, value: parseInt(userId, 10) };
+    } else if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) {
+      return { type: sql.UniqueIdentifier, value: userId };
+    } else {
+      return { type: sql.NVarChar, value: userId };
+    }
+  }
+
   private parseConnectionString(connectionString: string): any {
     const config: any = { options: { trustServerCertificate: true } };
     const parts = connectionString.split(';');
@@ -109,10 +124,11 @@ export class NotificationsService {
       // Debug: Log the UUIDs being used
       this.logger.log(`[CreateNotification] tenantId: ${tenantId} (type: ${typeof tenantId}), userId: ${userId} (type: ${typeof userId})`);
 
+      const userIdParam = this.getUserIdParam(userId);
       const result = await pool
         .request()
         .input('tenant_id', sql.UniqueIdentifier, tenantId)
-        .input('user_id', sql.UniqueIdentifier, userId)
+        .input('user_id', userIdParam.type, userIdParam.value)
         .input('type', sql.NVarChar(50), type)
         .input('title', sql.NVarChar(200), title)
         .input('message', sql.NVarChar(sql.MAX), message)
@@ -158,10 +174,12 @@ export class NotificationsService {
         `);
       this.logger.log(`[GetUserNotifications] DEBUG - Last 10 notifications in DB for tenant ${tenantId}:`, JSON.stringify(allNotificationsDebug.recordset, null, 2));
       
+      const userIdParam = this.getUserIdParam(userId);
+      
       // Debugging: Check notifications for this specific user
       const userNotificationsDebug = await pool
         .request()
-        .input('user_id', sql.UniqueIdentifier, userId)
+        .input('user_id', userIdParam.type, userIdParam.value)
         .input('tenant_id', sql.UniqueIdentifier, tenantId)
         .query(`
           SELECT TOP 5 id, user_id, tenant_id, title, created_at
@@ -174,7 +192,7 @@ export class NotificationsService {
       // Get total count
       const countResult = await pool
         .request()
-        .input('user_id', sql.UniqueIdentifier, userId)
+        .input('user_id', userIdParam.type, userIdParam.value)
         .input('tenant_id', sql.UniqueIdentifier, tenantId)
         .query(`
           SELECT COUNT(*) as total
@@ -191,7 +209,7 @@ export class NotificationsService {
       // Get notifications
       const result = await pool
         .request()
-        .input('user_id', sql.UniqueIdentifier, userId)
+        .input('user_id', userIdParam.type, userIdParam.value)
         .input('tenant_id', sql.UniqueIdentifier, tenantId)
         .input('limit', sql.Int, limit)
         .input('offset', sql.Int, offset)
@@ -222,10 +240,11 @@ export class NotificationsService {
     const pool = await this.ensureControlPool();
 
     try {
+      const userIdParam = this.getUserIdParam(userId);
       const result = await pool
         .request()
         .input('id', sql.BigInt, notificationId)
-        .input('user_id', sql.UniqueIdentifier, userId)
+        .input('user_id', userIdParam.type, userIdParam.value)
         .input('tenant_id', sql.UniqueIdentifier, tenantId)
         .query(`
           UPDATE notifications
@@ -252,9 +271,10 @@ export class NotificationsService {
     const pool = await this.ensureControlPool();
 
     try {
+      const userIdParam = this.getUserIdParam(userId);
       const result = await pool
         .request()
-        .input('user_id', sql.UniqueIdentifier, userId)
+        .input('user_id', userIdParam.type, userIdParam.value)
         .input('tenant_id', sql.UniqueIdentifier, tenantId)
         .query(`
           UPDATE notifications
@@ -302,9 +322,10 @@ export class NotificationsService {
     const pool = await this.ensureControlPool();
 
     try {
+      const userIdParam = this.getUserIdParam(userId);
       const result = await pool
         .request()
-        .input('user_id', sql.UniqueIdentifier, userId)
+        .input('user_id', userIdParam.type, userIdParam.value)
         .input('tenant_id', sql.UniqueIdentifier, tenantId)
         .query(`
           SELECT COUNT(*) as count

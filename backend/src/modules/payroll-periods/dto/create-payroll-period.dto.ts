@@ -7,3 +7,6 @@ export class CreatePayrollPeriodDto {
   is_closed?: boolean; // Optional, default: false
 }
 
+
+
+

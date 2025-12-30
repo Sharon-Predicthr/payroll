@@ -281,7 +281,6 @@ export function CreatePayslipDialog({ open, onOpenChange, onSuccess }: CreatePay
                     <span className="text-sm text-gray-700">{payslipId}</span>
                     <Button
                       variant="outline"
-                      size="sm"
                       onClick={() => handleViewPayslip(payslipId)}
                       className="h-8 px-2 text-xs"
                     >

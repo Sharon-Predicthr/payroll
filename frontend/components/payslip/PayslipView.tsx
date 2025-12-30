@@ -8,6 +8,7 @@ import { DeductionsTable } from "@/app/[locale]/payslip/[payslipId]/components/D
 import { SummaryCards } from "@/app/[locale]/payslip/[payslipId]/components/SummaryCards";
 import { VacationSickBalances } from "@/app/[locale]/payslip/[payslipId]/components/VacationSickBalances";
 import { PayslipFooter } from "@/app/[locale]/payslip/[payslipId]/components/PayslipFooter";
+import { AdditionalDataSection } from "./AdditionalDataSection";
 import { getAuthHeader, getTenant } from "@/lib/auth";
 import { Loader2 } from "lucide-react";
 
@@ -94,6 +95,14 @@ export interface PayslipData {
   permissions: {
     can_edit: boolean;
     can_download_pdf: boolean;
+  };
+  additional_data?: {
+    general_info?: { [key: string]: any };
+    monthly_tax_info?: { [key: string]: any };
+    yearly_accumulated_info?: { [key: string]: any };
+    employee_data?: { [key: string]: any };
+    direct_data?: { [key: string]: any };
+    custom_fields?: Array<{ label: string; value: any; category?: string }>;
   };
 }
 
@@ -414,6 +423,10 @@ export function PayslipView({
           vacation={data.balances.vacation}
           sick={data.balances.sick}
         />
+
+        {data.additional_data && (
+          <AdditionalDataSection additionalData={data.additional_data} />
+        )}
 
         <PayslipFooter
           generationDate={data.payslip.generation_date}

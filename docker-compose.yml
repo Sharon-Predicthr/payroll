@@ -1,0 +1,124 @@
+services:
+  # SQL Server Database
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: payroll-sqlserver
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=MyStrongPass123!
+      - MSSQL_PID=Developer
+    ports:
+      - "1435:1433"
+    volumes:
+      - sqlserver-data:/var/opt/mssql
+      - ./database/backups:/backups:ro
+    networks:
+      - payroll-network
+    healthcheck:
+      test: /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P MyStrongPass123! -C -Q "SELECT 1" || exit 1
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+
+  sqlserver-init:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: payroll-sqlserver-init
+    environment:
+      - MSSQL_SA_PASSWORD=MyStrongPass123!
+    volumes:
+      - ./database/init/create-db-and-tables.sh:/init.sh:ro
+      - ./database/init/restore-tenant-db.sh:/docker-entrypoint-initdb.d/restore-tenant-db.sh:ro
+      - ./database/init/create-tenant-entry.sh:/docker-entrypoint-initdb.d/create-tenant-entry.sh:ro
+      - ./database/objects/tables:/tables:ro
+      - ./backend/database/migrations:/migrations:ro
+      - ./database/backups:/backups:ro
+    networks:
+      - payroll-network
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: >
+      bash -c "
+      echo 'Waiting for SQL Server to be ready...' &&
+      sleep 5 &&
+      for i in {1..60}; do
+        /opt/mssql-tools18/bin/sqlcmd -S sqlserver -U sa -P MyStrongPass123! -C -Q 'SELECT 1' > /dev/null 2>&1 && break || sleep 2;
+      done &&
+      echo 'SQL Server is ready! Running initialization...' &&
+      MSSQL_SA_PASSWORD=MyStrongPass123! bash /init.sh
+      "
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: payroll-backend
+    environment:
+      - NODE_ENV=production
+      - CONTROL_DB_URL=Server=sqlserver;Database=PayrollControlDB;User Id=sa;Password=MyStrongPass123!;TrustServerCertificate=True;
+      - JWT_SECRET=your-super-secret-jwt-key-change-in-production
+      - PORT=4000
+    ports:
+      - "4000:4000"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      sqlserver-init:
+        condition: service_completed_successfully
+    networks:
+      - payroll-network
+    restart: unless-stopped
+    volumes:
+      - ./backend/fonts:/app/fonts:ro
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_BACKEND_URL=http://localhost:4000
+    container_name: payroll-frontend
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_BACKEND_URL=http://localhost:4000
+      - BACKEND_URL=http://backend:4000
+      - NEXT_PUBLIC_API_BASE_URL=http://localhost:4000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - payroll-network
+    restart: unless-stopped
+
+  # Nginx Reverse Proxy (optional, for production)
+  nginx:
+    image: nginx:alpine
+    container_name: payroll-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - payroll-network
+    restart: unless-stopped
+    profiles:
+      - production
+
+volumes:
+  sqlserver-data:
+    driver: local
+
+networks:
+  payroll-network:
+    driver: bridge
+

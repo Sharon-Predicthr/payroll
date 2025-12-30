@@ -59,3 +59,6 @@ Write-Host "Terminal 4 (Frontend ngrok - you need to run this):" -ForegroundColo
 Write-Host "  ngrok http 3000" -ForegroundColor White -BackgroundColor DarkGray
 Write-Host ""
 
+
+
+

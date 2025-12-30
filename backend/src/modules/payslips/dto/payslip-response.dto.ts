@@ -77,6 +77,102 @@ export class PayslipPermissionsDto {
   can_download_pdf: boolean;
 }
 
+export class PayslipAdditionalDataDto {
+  // General Information (מידע כללי)
+  general_info?: {
+    department_number?: string;
+    department_name?: string;
+    employee_address?: string;
+    employee_national_id?: string;
+    tariff_monthly?: number;
+    tariff_daily?: number;
+    tariff_hourly?: number;
+    standard_hours_per_month?: number;
+    start_of_work?: string;
+    seniority_years?: number;
+    seniority_months?: number;
+    job_pct?: number;
+    partial_period_pct?: number;
+    tax_credit_points?: number;
+    tax_pct_level?: number;
+    ytd_months_of_work?: number;
+    employer_tax_file_number?: string;
+    employer_national_insurance_number?: string;
+    bank_code?: string;
+    branch_code?: string;
+    account_number?: string;
+  };
+
+  // Monthly Tax Information (מידע מס חודשי)
+  monthly_tax_info?: {
+    tax_credit_points?: number;
+    tax_pct_level?: number;
+    severance_monthly?: number;
+    severance_gross_monthly?: number;
+    kpg_employer_monthly?: number;
+    kpg_gross_monthly?: number;
+    khs_employer_monthly?: number;
+    khs_gross_monthly?: number;
+    city_tax_credit_month?: number;
+    seif_47_exempt_month?: number;
+    shovi_monthly?: number;
+  };
+
+  // Yearly/Accumulated Information (מידע שנתי/מצטבר)
+  yearly_accumulated_info?: {
+    ytd_gross_payments?: number;
+    ytd_shovi?: number;
+    ytd_gross_for_tax?: number;
+    ytd_tax?: number;
+    ytd_bl_employee?: number;
+    ytd_bl_employer?: number;
+    ytd_health_employee?: number;
+    ytd_health_employer?: number;
+    ytd_35_tax_exempt?: number;
+    ytd_khs_employer?: number;
+    ytd_khs_employee?: number;
+    ytd_47_tax_deduction?: number;
+    ytd_pension_employer?: number;
+    ytd_pension_employee?: number;
+    ytd_severance_employer?: number;
+  };
+  
+  // Employee additional data (נתונים עובדים) - kept for backward compatibility
+  employee_data?: {
+    work_days_in_company?: number;
+    work_hours_in_company?: number;
+    salary_taxable?: number;
+    salary_national_insurance?: number;
+    salary_insured?: number;
+    base_hourly_rate?: number;
+    national_insurance_base?: number;
+    monthly_minimum_salary?: number;
+    hourly_minimum_salary?: number;
+    [key: string]: any;
+  };
+  
+  // Direct data (נתונים ישירים) - kept for backward compatibility
+  direct_data?: {
+    direct_work_days?: number;
+    direct_work_hours?: number;
+    direct_work_hours_attested?: number;
+    hours_per_day?: number;
+    regular_credit_points?: number;
+    marginal_tax_percentage?: number;
+    version_code?: string;
+    cumulative_calculation?: string;
+    payment_method?: string;
+    [key: string]: any;
+  };
+  
+  // Additional custom fields
+  custom_fields?: Array<{
+    label: string;
+    value: string | number;
+    category?: 'employee' | 'direct' | 'other' | 'general' | 'monthly_tax' | 'yearly';
+  }>;
+}
+
 export class PayslipResponseDto {
   payslip: PayslipMetaDto;
   company: PayslipCompanyDto;
@@ -89,5 +185,6 @@ export class PayslipResponseDto {
   attendance: PayslipAttendanceDto;
   balances: PayslipBalancesDto;
   permissions: PayslipPermissionsDto;
+  additional_data?: PayslipAdditionalDataDto; // Additional information fields
 }
 

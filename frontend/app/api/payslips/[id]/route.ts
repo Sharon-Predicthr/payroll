@@ -36,6 +36,14 @@ export async function GET(
       );
     }
 
+    // Log additional_data for debugging
+    if (data?.data?.additional_data) {
+      console.log('[API /payslips/[id]] Additional data received:', JSON.stringify(data.data.additional_data, null, 2));
+      console.log('[API /payslips/[id]] Yearly accumulated info keys:', Object.keys(data.data.additional_data.yearly_accumulated_info || {}).join(', '));
+    } else {
+      console.log('[API /payslips/[id]] No additional_data in response');
+    }
+
     return NextResponse.json(data);
   } catch (error: any) {
     console.error('[API Route] Error:', error);

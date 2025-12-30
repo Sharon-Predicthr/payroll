@@ -8,3 +8,6 @@ if "%~1"=="" (
     powershell -ExecutionPolicy Bypass -File "%~dp0update-ngrok-url.ps1" -NgrokUrl "%~1"
 )
 
+
+
+
