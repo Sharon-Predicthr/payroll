@@ -1,8 +1,9 @@
-import { Controller, Get, Param, Delete, Put, Post, Body, Query, UseGuards, Request, Logger } from '@nestjs/common';
+import { Controller, Get, Param, Delete, Put, Post, Body, Query, UseGuards, Request, Logger, BadRequestException } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { TenantConnectionGuard } from '../../common/guards/tenant-connection.guard';
 import { EmployeesService } from './employees.service';
 import { SaveEmployeeDto } from './dto/save-employee.dto';
+import { AddEmployeeDto } from './dto/add-employee.dto';
 
 @Controller('employees')
 @UseGuards(AuthGuard('jwt'), TenantConnectionGuard)
@@ -25,8 +26,14 @@ export class EmployeesController {
   ) {
     try {
       const tenantCode = req.tenantCode;
+      this.logger.log(`[getEmployees] Controller received tenantCode: ${tenantCode}`);
+      this.logger.log(`[getEmployees] Request tenantCode from req: ${JSON.stringify(req.tenantCode)}`);
       const pageNum = page ? parseInt(page, 10) : 1;
       const limitNum = limit ? parseInt(limit, 10) : 20;
+      
+      if (!tenantCode) {
+        this.logger.error('[getEmployees] tenantCode is missing from request!');
+      }
       
       const result = await this.employeesService.getEmployees(tenantCode, pageNum, limitNum);
       
@@ -43,6 +50,61 @@ export class EmployeesController {
     } catch (error: any) {
       console.error('[EmployeesController] Error:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Add a new employee using sp_add_employee stored procedure
+   * POST /employees/add
+   * NOTE: This must be defined BEFORE @Get(':id') to avoid route conflicts
+   */
+  @Post('add')
+  async addEmployee(
+    @Body() addEmployeeDto: AddEmployeeDto,
+    @Request() req: any,
+  ) {
+    try {
+      const tenantCode = req.tenantCode;
+      this.logger.log(`[addEmployee] Received request to add employee: ${addEmployeeDto.employee_id}`);
+      
+      // Validate mandatory fields
+      const mandatoryFields = [
+        'employee_id', 'tz_id', 'first_name', 'last_name', 'gender',
+        'date_of_birth', 'hire_date', 'employment_status', 'department_number'
+      ];
+      const missingFields = mandatoryFields.filter(field => !addEmployeeDto[field]);
+      
+      if (missingFields.length > 0) {
+        throw new BadRequestException(`Missing mandatory fields: ${missingFields.join(', ')}`);
+      }
+      
+      // Call the stored procedure
+      const result = await this.employeesService.addEmployee(tenantCode, addEmployeeDto);
+      
+      // If SP returned error code, throw an exception with the message
+      if (result.status_code !== 0) {
+        throw new BadRequestException({
+          status_code: result.status_code,
+          status_message: result.status_message,
+        });
+      }
+      
+      return {
+        success: true,
+        status_code: result.status_code,
+        status_message: result.status_message,
+        employee_id: result.employee_id,
+      };
+    } catch (error: any) {
+      this.logger.error(`[addEmployee] Error:`, error);
+      
+      // If it's already a BadRequestException with status_code, return it as-is
+      if (error.response && error.response.status_code !== undefined) {
+        throw error;
+      }
+      
+      // Otherwise, wrap it
+      throw new BadRequestException(error.message || 'Failed to add employee');
     }
   }
 

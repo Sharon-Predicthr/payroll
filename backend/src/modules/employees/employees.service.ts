@@ -108,7 +108,13 @@ export class EmployeesService extends BaseTenantService {
    * Get all employees (master list) with pagination
    */
   async getEmployees(tenantCode: string, page: number = 1, limit: number = 20): Promise<{ employees: Employee[]; total: number; page: number; limit: number; totalPages: number }> {
+    this.logger.log(`[getEmployees] Called for tenantCode: ${tenantCode}`);
     console.log('[EmployeesService] getEmployees called for tenant:', tenantCode);
+    
+    if (!tenantCode) {
+      this.logger.error('[getEmployees] tenantCode is null or undefined!');
+      throw new Error('tenantCode is required');
+    }
     
     const pool = await this.getTenantPool(tenantCode);
     console.log('[EmployeesService] Got tenant pool');
@@ -129,37 +135,79 @@ export class EmployeesService extends BaseTenantService {
         console.log(`  - ${col.COLUMN_NAME} (${col.DATA_TYPE})`);
       });
 
-      // Get total count
+      // Get total count - filter by client_id (tenant code)
+      // Use LTRIM/RTRIM to handle any whitespace issues and ensure exact match
+      this.logger.log(`[getEmployees] Executing count query with client_id = '${tenantCode}'`);
       const countResult = await pool
         .request()
+        .input('client_id', sql.NVarChar, tenantCode.trim())
         .query(`
           SELECT COUNT(*) as total
           FROM employees
-          WHERE is_active = 1
+          WHERE LTRIM(RTRIM(client_id)) = LTRIM(RTRIM(@client_id)) AND is_active = 1
         `);
+      
+      this.logger.log(`[getEmployees] Count query result: ${countResult.recordset[0]?.total || 0} employees for client_id = '${tenantCode}'`);
+      
+      // Debug: Let's also check what client_ids actually exist in the table
+      const debugResult = await pool
+        .request()
+        .query(`
+          SELECT DISTINCT LTRIM(RTRIM(client_id)) as client_id, COUNT(*) as count
+          FROM employees
+          WHERE is_active = 1
+          GROUP BY LTRIM(RTRIM(client_id))
+        `);
+      this.logger.log(`[getEmployees] Debug: All client_ids in employees table:`, JSON.stringify(debugResult.recordset));
       
       const total = countResult.recordset[0]?.total || 0;
       const totalPages = Math.ceil(total / limit);
       const offset = (page - 1) * limit;
 
-      // Now query with pagination
-      console.log('[EmployeesService] Executing query with pagination...', { page, limit, offset });
+      // Now query with pagination - filter by client_id (tenant code)
+      this.logger.log(`[getEmployees] Executing query with pagination for client_id=${tenantCode}: page=${page}, limit=${limit}, offset=${offset}, total=${total}, totalPages=${totalPages}`);
+      
+      // Ensure offset is not negative
+      const safeOffset = Math.max(0, offset);
+      
       const result = await pool
         .request()
-        .input('offset', sql.Int, offset)
+        .input('client_id', sql.NVarChar, tenantCode.trim())
+        .input('offset', sql.Int, safeOffset)
         .input('limit', sql.Int, limit)
         .query(`
           SELECT *
           FROM employees
-          WHERE is_active = 1
+          WHERE LTRIM(RTRIM(client_id)) = LTRIM(RTRIM(@client_id)) AND is_active = 1
           ORDER BY first_name, last_name, employee_id
           OFFSET @offset ROWS
           FETCH NEXT @limit ROWS ONLY
         `);
 
-      console.log('[EmployeesService] Query result count:', result.recordset.length);
+      this.logger.log(`[getEmployees] Query returned ${result.recordset.length} employees`);
+      if (result.recordset.length > 0) {
+        this.logger.log(`[getEmployees] First employee: ${result.recordset[0].employee_id}, client_id: ${result.recordset[0].client_id}`);
+        this.logger.log(`[getEmployees] Last employee: ${result.recordset[result.recordset.length - 1].employee_id}, client_id: ${result.recordset[result.recordset.length - 1].client_id}`);
+        
+        // Check if any employees have wrong client_id (trimmed comparison)
+        const expectedClientId = tenantCode.trim();
+        const wrongClientIds = result.recordset.filter((emp: any) => (emp.client_id || '').trim() !== expectedClientId);
+        if (wrongClientIds.length > 0) {
+          this.logger.error(`[getEmployees] WARNING: Found ${wrongClientIds.length} employees with wrong client_id!`);
+          wrongClientIds.forEach((emp: any) => {
+            this.logger.error(`[getEmployees] Employee ${emp.employee_id} has client_id='${(emp.client_id || '').trim()}' but expected '${expectedClientId}'`);
+          });
+        }
+      }
 
       const employees = result.recordset.map((row: any) => {
+        // Log client_id for debugging - use trimmed comparison
+        const rowClientId = (row.client_id || '').trim();
+        const expectedClientId = tenantCode.trim();
+        if (rowClientId !== expectedClientId) {
+          this.logger.error(`[getEmployees] WARNING: Employee ${row.employee_id} has client_id='${rowClientId}' but expected '${expectedClientId}'`);
+        }
+        
         // Map actual database columns to our interface
         // Based on the actual schema:
         // - employee_id (not id, not employee_code)
@@ -1183,7 +1231,12 @@ export class EmployeesService extends BaseTenantService {
         } else if (typeof value === 'string') {
           request.input(paramName, sql.NVarChar, value);
         } else if (typeof value === 'number') {
-          request.input(paramName, sql.Int, value);
+          // Check if this is a decimal field (employment_percent)
+          if (key === 'employment_percent') {
+            request.input(paramName, sql.Decimal(18, 2), value);
+          } else {
+            request.input(paramName, sql.Int, value);
+          }
         } else if (typeof value === 'boolean') {
           request.input(paramName, sql.Bit, value);
         } else if (value instanceof Date) {
@@ -1297,19 +1350,36 @@ export class EmployeesService extends BaseTenantService {
     changes: { created?: any[]; updated?: any[]; deleted?: (number | string)[] },
     operationLog: string[],
   ): Promise<void> {
+    this.logger.debug(`[saveDetailTableInTransaction ${tableName}] START - primaryKeyColumn: ${primaryKeyColumn}, has created: ${!!changes.created}, has updated: ${!!changes.updated}, has deleted: ${!!changes.deleted}`);
+    
     // Get table structure using a request from the transaction
     const schemaRequest = new sql.Request(transaction);
     const columnsResult = await schemaRequest.query(`
-      SELECT COLUMN_NAME, DATA_TYPE
-      FROM INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_NAME = '${tableName}'
-      ORDER BY ORDINAL_POSITION
+      SELECT 
+        c.COLUMN_NAME, 
+        c.DATA_TYPE,
+        CASE WHEN ic.object_id IS NOT NULL THEN 1 ELSE 0 END AS IS_IDENTITY
+      FROM INFORMATION_SCHEMA.COLUMNS c
+      LEFT JOIN sys.identity_columns ic ON ic.object_id = OBJECT_ID('${tableName}') AND ic.name = c.COLUMN_NAME
+      WHERE c.TABLE_NAME = '${tableName}'
+      ORDER BY c.ORDINAL_POSITION
     `);
 
     const columns = columnsResult.recordset.map((row: any) => row.COLUMN_NAME);
     const dataTypes = columnsResult.recordset.map((row: any) => row.DATA_TYPE);
+    const isIdentityMap = new Map<string, boolean>();
+    columnsResult.recordset.forEach((row: any) => {
+      isIdentityMap.set(row.COLUMN_NAME, row.IS_IDENTITY === 1);
+    });
     const dataTypeMap = new Map<string, string>();
     columns.forEach((col, idx) => dataTypeMap.set(col, dataTypes[idx]));
+    
+    // Check if primary key is IDENTITY
+    const isPrimaryKeyIdentity = isIdentityMap.get(primaryKeyColumn) || false;
+    
+    this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Table columns: ${JSON.stringify(columns)}`);
+    this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Primary key column: ${primaryKeyColumn}, has 'id' column: ${columns.includes('id')}`);
+    this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Primary key '${primaryKeyColumn}' is IDENTITY: ${isPrimaryKeyIdentity}`);
     
     // Get the data type of the primary key column to determine if it's string or number
     const primaryKeyDataType = dataTypeMap.get(primaryKeyColumn);
@@ -1341,7 +1411,12 @@ export class EmployeesService extends BaseTenantService {
     // UPDATE
     if (changes.updated && changes.updated.length > 0) {
       for (const record of changes.updated) {
-        const recordId = record[primaryKeyColumn] || record.id || record[`${tableName.split('_').pop()}_id`];
+        // Filter out 'id' from record if it doesn't match primary key column
+        const recordToUse = { ...record };
+        if (recordToUse.hasOwnProperty('id') && primaryKeyColumn !== 'id') {
+          delete recordToUse.id;
+        }
+        const recordId = recordToUse[primaryKeyColumn] || recordToUse[`${tableName.split('_').pop()}_id`];
         if (!recordId) {
           throw new Error(`Cannot update ${tableName}: missing primary key`);
         }
@@ -1362,14 +1437,25 @@ export class EmployeesService extends BaseTenantService {
           updateRequest.input('recordId', sql.NVarChar, String(recordId));
         }
 
+        // Filter out 'id' from record if it doesn't match primary key column
+        const recordToUseForUpdate = { ...record };
+        if (recordToUseForUpdate.hasOwnProperty('id') && primaryKeyColumn !== 'id') {
+          delete recordToUseForUpdate.id;
+        }
+        
         columns.forEach((column) => {
           if (column === 'employee_id' || column === primaryKeyColumn || column === 'client_id') {
             return; // Skip these fields
           }
+          
+          // Skip 'id' column if it exists in table but primary key has different name
+          if (column === 'id' && primaryKeyColumn !== 'id') {
+            return;
+          }
 
-          if (record.hasOwnProperty(column) && record[column] !== undefined) {
+          if (recordToUseForUpdate.hasOwnProperty(column) && recordToUseForUpdate[column] !== undefined) {
             updateFields.push(`${column} = @${column.replace(/_/g, '')}`);
-            const value = record[column];
+            const value = recordToUseForUpdate[column];
             const dataType = dataTypeMap.get(column);
 
             // Map data types
@@ -1415,32 +1501,134 @@ export class EmployeesService extends BaseTenantService {
 
     // INSERT
     if (changes.created && changes.created.length > 0) {
+      // Get client_id from employee if table requires it
+      let clientId: string | null = null;
+      const hasClientIdColumn = columns.includes('client_id');
+      if (hasClientIdColumn) {
+        try {
+          const clientIdRequest = new sql.Request(transaction);
+          clientIdRequest.input('employeeId', sql.NVarChar, employeeId);
+          const clientIdResult = await clientIdRequest.query(`
+            SELECT client_id FROM employees WHERE employee_id = @employeeId
+          `);
+          if (clientIdResult.recordset.length > 0) {
+            clientId = clientIdResult.recordset[0].client_id;
+            this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Got client_id: ${clientId}`);
+          }
+        } catch (clientIdError: any) {
+          this.logger.error(`[saveDetailTableInTransaction ${tableName}] Error getting client_id:`, clientIdError);
+          throw clientIdError;
+        }
+      }
+      
       for (const record of changes.created) {
+        this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Processing record: ${JSON.stringify(record)}`);
+        
+        // Filter out 'id' from record FIRST if it doesn't match primary key column
+        // Frontend sends 'id: null' but table uses 'pay_item_id' or other name
+        const recordToUse = { ...record };
+        if (recordToUse.hasOwnProperty('id') && primaryKeyColumn !== 'id') {
+          delete recordToUse.id;
+          this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Removed 'id' field from record (primary key is '${primaryKeyColumn}')`);
+        }
+        this.logger.debug(`[saveDetailTableInTransaction ${tableName}] RecordToUse keys: ${JSON.stringify(Object.keys(recordToUse))}`);
+        
         const insertFields: string[] = ['employee_id'];
         const insertValues: string[] = ['@employeeId'];
         const insertRequest = new sql.Request(transaction);
         insertRequest.input('employeeId', sql.NVarChar, employeeId);
-
+        
+        // If primary key is not IDENTITY, we need to generate it manually
+        if (!isPrimaryKeyIdentity && primaryKeyColumn) {
+          // Get the next value for the primary key
+          const maxIdRequest = new sql.Request(transaction);
+          maxIdRequest.input('employeeId', sql.NVarChar, employeeId);
+          const maxIdResult = await maxIdRequest.query(`
+            SELECT ISNULL(MAX(${primaryKeyColumn}), 0) + 1 AS nextId
+            FROM ${tableName}
+            WHERE employee_id = @employeeId
+          `);
+          const nextId = maxIdResult.recordset[0]?.nextId || 1;
+          insertFields.push(primaryKeyColumn);
+          insertValues.push(`@${primaryKeyColumn.replace(/_/g, '')}`);
+          if (primaryKeyDataType === 'int' || primaryKeyDataType === 'bigint' || primaryKeyDataType === 'smallint') {
+            insertRequest.input(primaryKeyColumn.replace(/_/g, ''), sql.Int, nextId);
+          } else {
+            insertRequest.input(primaryKeyColumn.replace(/_/g, ''), sql.NVarChar, String(nextId));
+          }
+          this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Generated primary key value: ${nextId} for ${primaryKeyColumn}`);
+        }
+        
+        // Add client_id if table has this column and we have the value
+        if (hasClientIdColumn && clientId) {
+          insertFields.push('client_id');
+          insertValues.push('@clientId');
+          insertRequest.input('clientId', sql.NVarChar, clientId);
+        }
+        
         columns.forEach((column) => {
           if (column === 'employee_id' || column === primaryKeyColumn || column === 'client_id') {
             return; // Skip employee_id (already added) and primary key (auto-increment)
           }
+          
+          // Skip 'id' column if it exists in table but primary key has different name
+          if (column === 'id' && primaryKeyColumn !== 'id') {
+            return;
+          }
 
-          if (record.hasOwnProperty(column) && record[column] !== undefined) {
+          // Check if column is in record (even if null/undefined) or if it's a required field
+          // Use recordToUse which has 'id' removed if it doesn't match primary key
+          const hasValue = recordToUse.hasOwnProperty(column);
+          const value = hasValue ? recordToUse[column] : undefined;
+          
+          const dataType = dataTypeMap.get(column);
+          
+          // For required fields in employees_pay_items (pct, quantity, rate), always include them
+          // Check if this is a decimal or int field that might be required
+          const isDecimalField = dataType === 'decimal' || dataType === 'numeric' || dataType === 'float' || dataType === 'real';
+          const isIntField = dataType === 'int' || dataType === 'smallint';
+          const isRequiredPayItemField = tableName === 'employees_pay_items' && 
+            (column === 'pct' || column === 'quantity' || column === 'rate');
+          
+          // Skip if column doesn't exist in record and it's not a required field
+          // This prevents trying to use 'id' from frontend when table doesn't have 'id' column
+          // Also skip if column is 'id' and it's not the primary key (should have been caught above, but double-check)
+          if (column === 'id' && primaryKeyColumn !== 'id') {
+            this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Skipping 'id' column (primary key is '${primaryKeyColumn}')`);
+            return;
+          }
+          
+          if (!hasValue && !isRequiredPayItemField) {
+            return;
+          }
+          
+          if (hasValue || isRequiredPayItemField) {
+            this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Adding column '${column}' to INSERT (hasValue: ${hasValue}, isRequiredPayItemField: ${isRequiredPayItemField})`);
             insertFields.push(column);
             insertValues.push(`@${column.replace(/_/g, '')}`);
-            const value = record[column];
-            const dataType = dataTypeMap.get(column);
 
             // Map data types
-            if (value === null) {
-              insertRequest.input(column.replace(/_/g, ''), sql.NVarChar, null);
+            if (value === null || value === undefined) {
+              if (isRequiredPayItemField) {
+                // For required fields in pay_items, use 0 as default
+                if (isDecimalField) {
+                  insertRequest.input(column.replace(/_/g, ''), sql.Decimal(18, 2), 0);
+                } else if (isIntField) {
+                  insertRequest.input(column.replace(/_/g, ''), sql.Int, 0);
+                } else {
+                  insertRequest.input(column.replace(/_/g, ''), sql.NVarChar, null);
+                }
+              } else {
+                insertRequest.input(column.replace(/_/g, ''), sql.NVarChar, null);
+              }
             } else if (dataType === 'bit' || dataType === 'tinyint') {
               insertRequest.input(column.replace(/_/g, ''), sql.Bit, Boolean(value));
-            } else if (dataType === 'int' || dataType === 'smallint') {
+            } else if (isIntField) {
               insertRequest.input(column.replace(/_/g, ''), sql.Int, Number(value));
-            } else if (dataType === 'decimal' || dataType === 'numeric' || dataType === 'float' || dataType === 'real') {
-              insertRequest.input(column.replace(/_/g, ''), sql.Decimal(18, 2), Number(value));
+            } else if (isDecimalField) {
+              // For decimal fields, handle null values - if column doesn't allow nulls, use 0
+              const decimalValue = value === null || value === undefined ? 0 : Number(value);
+              insertRequest.input(column.replace(/_/g, ''), sql.Decimal(18, 2), decimalValue);
             } else if (dataType === 'date' || dataType === 'datetime' || dataType === 'datetime2') {
               insertRequest.input(column.replace(/_/g, ''), sql.DateTime, value instanceof Date ? value : new Date(value));
             } else {
@@ -1454,6 +1642,9 @@ export class EmployeesService extends BaseTenantService {
             INSERT INTO ${tableName} (${insertFields.join(', ')})
             VALUES (${insertValues.join(', ')})
           `;
+          this.logger.debug(`[saveDetailTableInTransaction ${tableName}] INSERT query: ${insertQuery}`);
+          this.logger.debug(`[saveDetailTableInTransaction ${tableName}] INSERT fields: ${JSON.stringify(insertFields)}`);
+          this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Record keys: ${JSON.stringify(Object.keys(recordToUse))}`);
           await insertRequest.query(insertQuery);
         }
       }
@@ -1554,6 +1745,180 @@ export class EmployeesService extends BaseTenantService {
       changes,
       operationLog,
     );
+  }
+
+  /**
+   * Add a new employee using sp_add_employee stored procedure
+   */
+  async addEmployee(tenantCode: string, dto: any): Promise<{ status_code: number; status_message: string; employee_id?: string }> {
+    const pool = await this.getTenantPool(tenantCode);
+    
+    try {
+      const request = pool.request();
+      
+      // Mandatory parameters
+      request.input('client_id', sql.NVarChar, tenantCode);
+      request.input('employee_id', sql.NVarChar, dto.employee_id);
+      request.input('tz_id', sql.NVarChar, dto.tz_id);
+      request.input('first_name', sql.NVarChar, dto.first_name);
+      request.input('last_name', sql.NVarChar, dto.last_name);
+      request.input('gender', sql.NVarChar, dto.gender);
+      request.input('date_of_birth', sql.Date, dto.date_of_birth ? new Date(dto.date_of_birth) : null);
+      request.input('hire_date', sql.Date, dto.hire_date ? new Date(dto.hire_date) : null);
+      request.input('employment_status', sql.NVarChar, dto.employment_status);
+      request.input('department_number', sql.Int, dto.department_number);
+      
+      // Optional parameters
+      if (dto.employment_percent !== undefined && dto.employment_percent !== null) {
+        request.input('employment_percent', sql.Decimal(18, 2), dto.employment_percent);
+      }
+      if (dto.address_line1 !== undefined) {
+        request.input('address_line1', sql.NVarChar, dto.address_line1 || null);
+      }
+      if (dto.address_line2 !== undefined) {
+        request.input('address_line2', sql.NVarChar, dto.address_line2 || null);
+      }
+      if (dto.city_code !== undefined && dto.city_code !== null) {
+        request.input('city_code', sql.Int, dto.city_code);
+      }
+      if (dto.zip_code !== undefined) {
+        request.input('zip_code', sql.NVarChar, dto.zip_code || null);
+      }
+      if (dto.cell_phone_number !== undefined) {
+        request.input('cell_phone_number', sql.NVarChar, dto.cell_phone_number || null);
+      }
+      if (dto.email !== undefined) {
+        request.input('email', sql.NVarChar, dto.email || null);
+      }
+      if (dto.termination_date !== undefined) {
+        request.input('termination_date', sql.Date, dto.termination_date ? new Date(dto.termination_date) : null);
+      }
+      if (dto.job_title !== undefined) {
+        request.input('job_title', sql.NVarChar, dto.job_title || null);
+      }
+      if (dto.site_number !== undefined && dto.site_number !== null) {
+        request.input('site_number', sql.Int, dto.site_number);
+      }
+      if (dto.manager_id !== undefined) {
+        request.input('manager_id', sql.NVarChar, dto.manager_id || null);
+      }
+      if (dto.is_active !== undefined) {
+        request.input('is_active', sql.Bit, dto.is_active !== false);
+      }
+      
+      // Output parameters - must be declared BEFORE execute
+      request.output('status_code', sql.Int);
+      request.output('status_message', sql.NVarChar(400));
+      
+      this.logger.log(`[addEmployee] Calling sp_add_employee for employee_id: ${dto.employee_id}, tenant: ${tenantCode}`);
+      this.logger.debug(`[addEmployee] Input parameters:`, {
+        client_id: tenantCode,
+        employee_id: dto.employee_id,
+        tz_id: dto.tz_id,
+        first_name: dto.first_name,
+        last_name: dto.last_name,
+        gender: dto.gender,
+        date_of_birth: dto.date_of_birth,
+        hire_date: dto.hire_date,
+        employment_status: dto.employment_status,
+        department_number: dto.department_number,
+      });
+      
+      // Execute the stored procedure
+      let result: any;
+      try {
+        result = await request.execute('sp_add_employee');
+        this.logger.log(`[addEmployee] SP executed successfully`);
+      } catch (spError: any) {
+        this.logger.error(`[addEmployee] SP execution error:`, spError);
+        throw new BadRequestException(`Stored procedure error: ${spError?.message || 'Unknown error'}`);
+      }
+      
+      // Try to get status from output parameters
+      let statusCode: number | null = null;
+      let statusMessage: string | null = null;
+      
+      const statusCodeParam = request.parameters.status_code;
+      const statusMessageParam = request.parameters.status_message;
+      
+      if (statusCodeParam && typeof statusCodeParam === 'object' && 'value' in statusCodeParam && statusCodeParam.value !== null) {
+        statusCode = statusCodeParam.value;
+        this.logger.log(`[addEmployee] Got status_code from output parameter: ${statusCode}`);
+      }
+      
+      if (statusMessageParam && typeof statusMessageParam === 'object' && 'value' in statusMessageParam && statusMessageParam.value !== null) {
+        statusMessage = statusMessageParam.value;
+        this.logger.log(`[addEmployee] Got status_message from output parameter: ${statusMessage}`);
+      }
+      
+      // Try to get from recordsets (SP may return SELECT with status)
+      if ((statusCode === null || statusCode === undefined) && result?.recordsets && result.recordsets.length > 0) {
+        const lastRecordset = result.recordsets[result.recordsets.length - 1];
+        if (lastRecordset && lastRecordset.length > 0) {
+          const firstRow = lastRecordset[0];
+          if (firstRow.status_code !== undefined && firstRow.status_code !== null) {
+            statusCode = firstRow.status_code;
+            this.logger.log(`[addEmployee] Got status_code from recordset: ${statusCode}`);
+          }
+          if (firstRow.status_message !== undefined && firstRow.status_message !== null) {
+            statusMessage = firstRow.status_message;
+            this.logger.log(`[addEmployee] Got status_message from recordset: ${statusMessage}`);
+          }
+        }
+      }
+      
+      // Also check single recordset
+      if ((statusCode === null || statusCode === undefined) && result?.recordset && result.recordset.length > 0) {
+        const firstRow = result.recordset[0];
+        if (firstRow.status_code !== undefined && firstRow.status_code !== null) {
+          statusCode = firstRow.status_code;
+          this.logger.log(`[addEmployee] Got status_code from single recordset: ${statusCode}`);
+        }
+        if (firstRow.status_message !== undefined && firstRow.status_message !== null) {
+          statusMessage = firstRow.status_message;
+          this.logger.log(`[addEmployee] Got status_message from single recordset: ${statusMessage}`);
+        }
+      }
+      
+      // If we don't have status_code, check if employee was created in DB
+      // This is a fallback - if SP ran without error and employee exists, assume success
+      if (statusCode === null || statusCode === undefined) {
+        this.logger.log(`[addEmployee] No status_code from SP, checking if employee was created in DB...`);
+        try {
+          const checkResult = await pool.request()
+            .input('client_id', sql.NVarChar, tenantCode)
+            .input('employee_id', sql.NVarChar, dto.employee_id)
+            .query(`SELECT employee_id FROM employees WHERE client_id = @client_id AND employee_id = @employee_id`);
+          
+          if (checkResult.recordset && checkResult.recordset.length > 0) {
+            // Employee was created successfully
+            this.logger.log(`[addEmployee] Employee found in DB - assuming success (status_code = 0)`);
+            statusCode = 0;
+            statusMessage = statusMessage || 'Employee created successfully';
+          } else {
+            // Employee not found - SP may have failed silently or returned error code
+            this.logger.warn(`[addEmployee] Employee not found in DB after SP execution`);
+            statusCode = 99; // Unknown error
+            statusMessage = statusMessage || 'Employee creation may have failed - please verify';
+          }
+        } catch (checkError: any) {
+          this.logger.error(`[addEmployee] Error checking if employee was created:`, checkError);
+          statusCode = 99;
+          statusMessage = 'Unable to verify employee creation';
+        }
+      }
+      
+      this.logger.log(`[addEmployee] Final status_code: ${statusCode}, status_message: ${statusMessage}`);
+      
+      return {
+        status_code: statusCode,
+        status_message: statusMessage || 'Unknown error',
+        employee_id: statusCode === 0 ? dto.employee_id : undefined,
+      };
+    } catch (error: any) {
+      this.logger.error(`[addEmployee] Error calling sp_add_employee:`, error);
+      throw error;
+    }
   }
 }
 

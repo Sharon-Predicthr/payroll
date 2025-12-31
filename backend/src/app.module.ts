@@ -9,6 +9,7 @@ import { OrganizationModule } from './modules/organization/organization.module';
 import { PayslipsModule } from './modules/payslips/payslips.module';
 import { LookupModule } from './modules/lookup/lookup.module';
 import { PayrollPeriodsModule } from './modules/payroll-periods/payroll-periods.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { TenantDbLoggerMiddleware } from './common/middleware/tenant-db-logger.middleware';
 import { SmartRouterMiddleware } from './router/smart-router.middleware';
 
@@ -27,6 +28,7 @@ import { SmartRouterMiddleware } from './router/smart-router.middleware';
     PayslipsModule, // Add Payslips module
     LookupModule, // Add Lookup module
     PayrollPeriodsModule, // Add Payroll Periods module
+    DashboardModule, // Add Dashboard module
   ],
   controllers: [],
   providers: [SmartRouterMiddleware],
