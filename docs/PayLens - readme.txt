@@ -220,9 +220,7 @@ The default SQL Server password is `MyStrongPass123!`. To change it:
    ```bash
    docker compose up -d --build
    ```
-4. **Rebuild all**:
-   docker-compose up -d --build backend frontend
-   docker-compose logs -f backend frontend
+
 ### Out of Disk Space
 
 Docker images and containers can use significant disk space. To clean up:

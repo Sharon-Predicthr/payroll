@@ -57,13 +57,24 @@ export function EditableFields({
     }
   };
 
-  // Update local data when data prop changes, but only in edit mode
-  // In read-only mode, we rely on field.value which is set when field is created
+  // Update local data when entering edit mode
   useEffect(() => {
     if (isEditing) {
-      setLocalData(data);
+      // When entering edit mode, initialize localData from data
+      // This preserves user input - we only update when first entering edit mode
+      setLocalData(prev => {
+        // If prev is empty, initialize from data
+        if (Object.keys(prev).length === 0) {
+          return { ...data };
+        }
+        // Otherwise, keep user's changes and merge with new data (user changes take precedence)
+        return { ...data, ...prev };
+      });
+    } else {
+      // When exiting edit mode, clear localData
+      setLocalData({});
     }
-  }, [data, isEditing]);
+  }, [isEditing]); // Only depend on isEditing to avoid overwriting user input while typing
 
   // Helper to get col-span class
   const getColSpanClass = (span: number) => {

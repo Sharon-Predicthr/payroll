@@ -605,6 +605,9 @@ export function LookupSelect({
     );
   }
 
+  // Show placeholder option when value is null/undefined (even if allowEmpty is false)
+  const showPlaceholderOption = (value === null || value === undefined);
+  
   return (
     <Select
       value={selectedValue}
@@ -612,7 +615,8 @@ export function LookupSelect({
       disabled={disabled}
       className={className}
     >
-      {allowEmpty && <option value="">{emptyLabel}</option>}
+      {showPlaceholderOption && <option value="">{placeholder}</option>}
+      {allowEmpty && !showPlaceholderOption && <option value="">{emptyLabel}</option>}
       {displayOptions.map((option, index) => {
         // Create unique key to prevent React warnings about duplicate keys
         // Use combination of lookupKey, value, and index to ensure uniqueness

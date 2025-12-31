@@ -16,6 +16,7 @@ import { Toast } from "@/components/ui/toast";
 import { useDirection } from "@/contexts/DirectionContext";
 import { isAuthenticated } from "@/lib/auth";
 import { CreatePayslipsDialog } from "./components/CreatePayslipsDialog";
+import { AddEmployeeDialog } from "./components/AddEmployeeDialog";
 
 // Force dynamic rendering
 export const dynamic = 'force-dynamic';
@@ -81,6 +82,7 @@ export default function EmployeesPage() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<Set<string>>(new Set());
   const [showCreatePayslipsDialog, setShowCreatePayslipsDialog] = useState(false);
+  const [showAddEmployeeDialog, setShowAddEmployeeDialog] = useState(false);
   const [userManuallySelected, setUserManuallySelected] = useState(false); // Track if user manually selected an employee
   
   // Pagination state
@@ -116,7 +118,35 @@ export default function EmployeesPage() {
     }
   }, [selectedEmployee]);
 
-  const fetchEmployees = async () => {
+  // Update selectedEmployee name when selectedEmployeeDetail changes (after save)
+  useEffect(() => {
+    if (selectedEmployeeDetail && selectedEmployee && selectedEmployeeDetail.id === selectedEmployee.id) {
+      const updatedName = selectedEmployeeDetail.full_name || 
+        `${selectedEmployeeDetail.first_name || ''} ${selectedEmployeeDetail.last_name || ''}`.trim();
+      if (updatedName && updatedName !== selectedEmployee.name) {
+        console.log('[EmployeesPage] useEffect - Updating selectedEmployee name from detail:', updatedName, 'old name:', selectedEmployee.name);
+        setSelectedEmployee(prev => {
+          if (!prev || prev.id !== selectedEmployeeDetail.id) return prev;
+          console.log('[EmployeesPage] useEffect - Setting new name:', updatedName);
+          return { ...prev, name: updatedName };
+        });
+        
+        // Also update the employee in the list if it exists there
+        setEmployees(prev => {
+          const employeeIndex = prev.findIndex(emp => emp.id === selectedEmployeeDetail.id);
+          if (employeeIndex >= 0) {
+            const updatedList = [...prev];
+            updatedList[employeeIndex] = { ...updatedList[employeeIndex], name: updatedName };
+            return updatedList;
+          }
+          return prev;
+        });
+      }
+    }
+  }, [selectedEmployeeDetail, selectedEmployee]);
+
+
+  const fetchEmployees = async (): Promise<Employee[]> => {
     try {
       setLoading(true);
       setError(null);
@@ -142,6 +172,7 @@ export default function EmployeesPage() {
           'Authorization': `Bearer ${token}`,
         },
         cache: 'no-store', // Force fresh fetch
+        next: { revalidate: 0 }, // Disable cache
       });
       
       console.log('[EmployeesPage] Response status:', response.status);
@@ -180,7 +211,7 @@ export default function EmployeesPage() {
         console.warn('[EmployeesPage] Unexpected response format:', data);
         setError('Invalid response format from server');
         setEmployees([]);
-        return;
+        return [];
       }
       
       if (!employeesData || !Array.isArray(employeesData)) {
@@ -191,15 +222,37 @@ export default function EmployeesPage() {
       }
       
       console.log('[EmployeesPage] Received', employeesData.length, 'employees');
+      console.log('[EmployeesPage] Raw employees data:', employeesData);
       const mappedEmployees = employeesData.map(mapBackendToFrontend);
       console.log('[EmployeesPage] Mapped employees:', mappedEmployees.length);
+      console.log('[EmployeesPage] Mapped employees list:', mappedEmployees.map(e => ({ id: e.id, name: e.name })));
       
+      // Use functional update to get current selectedEmployee
       setEmployees(mappedEmployees);
+      setSelectedEmployee(prevSelected => {
+        if (!prevSelected) return prevSelected;
+        const updatedEmployee = mappedEmployees.find(emp => emp.id === prevSelected.id);
+        if (updatedEmployee) {
+          console.log('[EmployeesPage] Updating selected employee from list:', updatedEmployee.name);
+          // Preserve any other properties from prevSelected that might not be in the list
+          return { ...prevSelected, ...updatedEmployee };
+        }
+        return prevSelected;
+      });
       
       // Update pagination info
       if (paginationData) {
-        setTotalEmployees(paginationData.total || mappedEmployees.length);
-        setTotalPages(paginationData.totalPages || 1);
+        const total = paginationData.total || 0;
+        const totalPages = paginationData.totalPages || 1;
+        setTotalEmployees(total);
+        setTotalPages(totalPages);
+        console.log('[EmployeesPage] Pagination info:', { total, totalPages, currentPage, pageSize });
+        
+        // If current page is beyond total pages, reset to last page
+        if (currentPage > totalPages && totalPages > 0) {
+          console.log('[EmployeesPage] Current page exceeds total pages, resetting to last page');
+          setCurrentPage(totalPages);
+        }
       } else {
         // If no pagination info, assume all data is loaded
         setTotalEmployees(mappedEmployees.length);
@@ -208,11 +261,15 @@ export default function EmployeesPage() {
       
       
       console.log('[EmployeesPage] ✅ Fetch completed successfully');
+      
+      // Return mapped employees for use in onSuccess callbacks
+      return mappedEmployees;
     } catch (err: any) {
       console.error('[EmployeesPage] ❌ Error fetching employees:', err);
       console.error('[EmployeesPage] Error stack:', err.stack);
       setError(err.message || 'Failed to load employees. Please check console for details.');
       setEmployees([]);
+      return []; // Return empty array on error
     } finally {
       setLoading(false);
     }
@@ -410,7 +467,54 @@ export default function EmployeesPage() {
     // Sorting is handled by DataGrid internally
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    const savedEmployeeId = selectedEmployee?.id;
+    
+    if (!savedEmployeeId) {
+      setToastMessage(t('savedSuccess'));
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 3000);
+      return;
+    }
+    
+    // First, refresh employee detail to get the latest data including updated name
+    const token = localStorage.getItem('paylens_access_token');
+    if (token) {
+      try {
+        const detailResponse = await fetch(`/api/employees/${savedEmployeeId}`, {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          cache: 'no-store',
+        });
+        
+        if (detailResponse.ok) {
+          const detailData = await detailResponse.json();
+          if (detailData.success && detailData.data) {
+            const updatedDetail = detailData.data;
+            setSelectedEmployeeDetail(updatedDetail);
+            
+            // Immediately update selectedEmployee name from the detail
+            const updatedName = updatedDetail.full_name || 
+              `${updatedDetail.first_name || ''} ${updatedDetail.last_name || ''}`.trim();
+            if (updatedName) {
+              console.log('[EmployeesPage] handleSave - Immediately updating selectedEmployee name:', updatedName);
+              setSelectedEmployee(prev => {
+                if (!prev || prev.id !== savedEmployeeId) return prev;
+                return { ...prev, name: updatedName };
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[EmployeesPage] Error fetching updated employee detail:', err);
+      }
+    }
+    
+    // Then refresh the employees list to update names in sidebar
+    await fetchEmployees();
+    
     setToastMessage(t('savedSuccess'));
     setShowToast(true);
     setTimeout(() => setShowToast(false), 3000);
@@ -579,9 +683,7 @@ export default function EmployeesPage() {
             )}
             <Button
               variant="primary"
-              onClick={() => {
-                /* Add employee logic */
-              }}
+              onClick={() => setShowAddEmployeeDialog(true)}
             >
               <svg className="w-4 h-4 mr-2 rtl:mr-0 rtl:ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -799,7 +901,7 @@ export default function EmployeesPage() {
                       action={
                         hasActiveFilters
                           ? { label: t('clearFilters'), onClick: handleClearFilters }
-                          : { label: t('addEmployee'), onClick: () => {/* Add employee logic */} }
+                          : { label: t('addEmployee'), onClick: () => setShowAddEmployeeDialog(true) }
                       }
                     />
                   ) : (
@@ -932,6 +1034,75 @@ export default function EmployeesPage() {
           onSuccess={() => {
             setShowCreatePayslipsDialog(false);
             setSelectedEmployeeIds(new Set());
+          }}
+        />
+
+        {/* Add Employee Dialog */}
+        <AddEmployeeDialog
+          open={showAddEmployeeDialog}
+          onOpenChange={setShowAddEmployeeDialog}
+          onSuccess={async (employeeId: string) => {
+            console.log('[EmployeesPage] Employee added successfully:', employeeId);
+            
+            // Close the dialog first
+            setShowAddEmployeeDialog(false);
+            
+            // Reset to page 1 to ensure we fetch from the beginning
+            if (currentPage !== 1) {
+              setCurrentPage(1);
+              // Wait for page state to update before fetching
+              await new Promise(resolve => setTimeout(resolve, 200));
+            }
+            
+            // Refresh employees list - this will fetch from page 1 with client_id filter
+            // fetchEmployees now returns the mapped employees
+            const fetchedEmployees = await fetchEmployees();
+            
+            // Fetch employee detail to get full info
+            await fetchEmployeeDetail(employeeId);
+            
+            // Check if employee is in the fetched list
+            const employeeInList = fetchedEmployees?.find(emp => emp.id === employeeId);
+            
+            if (employeeInList) {
+              // Employee found in list, select it
+              console.log('[EmployeesPage] New employee found in list, selecting:', employeeInList.id, employeeInList.name);
+              setSelectedEmployee(employeeInList);
+              setUserManuallySelected(true);
+            } else {
+              // Employee not in current page (might be on another page due to sorting)
+              // Create a temporary employee object and add it to the beginning of the list
+              console.log('[EmployeesPage] New employee not in current page, adding to beginning of list');
+              
+              // Create employee object - will be updated when detail loads
+              const newEmployee: Employee = {
+                id: employeeId,
+                name: employeeId, // Will be updated when detail loads
+                email: '',
+                department: '',
+                position: '',
+                status: 'Active',
+                country: 'N/A',
+                employmentType: 'Full-time',
+              };
+              
+              // Select the new employee
+              setSelectedEmployee(newEmployee);
+              setUserManuallySelected(true);
+              
+              // Add to beginning of current list
+              setEmployees(prevEmployees => {
+                // Avoid duplicates
+                if (prevEmployees.find(emp => emp.id === employeeId)) {
+                  return prevEmployees;
+                }
+                return [newEmployee, ...prevEmployees];
+              });
+            }
+            
+            setToastMessage(t('savedSuccess'));
+            setShowToast(true);
+            setTimeout(() => setShowToast(false), 3000);
           }}
         />
       </div>

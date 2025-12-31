@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PayLens - Installation Guide</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            color: #333;
+        }
+        h1 {
+            color: #0066cc;
+            border-bottom: 3px solid #0066cc;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #0066cc;
+            margin-top: 30px;
+            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 5px;
+        }
+        h3 {
+            color: #333;
+            margin-top: 20px;
+        }
+        code {
+            background-color: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+        pre {
+            background-color: #f4f4f4;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            border-left: 4px solid #0066cc;
+        }
+        pre code {
+            background-color: transparent;
+            padding: 0;
+        }
+        ul, ol {
+            margin-left: 20px;
+        }
+        li {
+            margin-bottom: 8px;
+        }
+        strong {
+            color: #0066cc;
+        }
+        .warning {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 10px;
+            margin: 15px 0;
+        }
+        .note {
+            background-color: #e7f3ff;
+            border-left: 4px solid #0066cc;
+            padding: 10px;
+            margin: 15px 0;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 15px 0;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #0066cc;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <h1>PayLens - Multi-Tenant Payroll SaaS Platform</h1>
+    
+    <p>A comprehensive payroll management system built with NestJS (backend) and Next.js (frontend), featuring multi-tenant architecture, employee management, payslip generation, and more.</p>
+
+    <h2>📋 Prerequisites</h2>
+    
+    <p>Before you begin, ensure you have the following installed on your machine:</p>
+
+    <h3>Required Software</h3>
+
+    <ol>
+        <li><strong>Docker Desktop</strong> (or Docker Engine + Docker Compose)
+            <ul>
+                <li><strong>Windows/Mac</strong>: Download from <a href="https://www.docker.com/products/docker-desktop">Docker Desktop</a></li>
+                <li><strong>Linux</strong>: Install Docker Engine and Docker Compose</li>
+                <li><strong>Verify installation</strong>: Open a terminal and run:
+                    <pre><code>docker --version
+docker compose version</code></pre>
+                    Both commands should display version numbers.
+                </li>
+            </ul>
+        </li>
+        <li><strong>Git</strong> (optional, if cloning from repository)
+            <ul>
+                <li>Download from <a href="https://git-scm.com/downloads">Git</a></li>
+                <li><strong>Verify installation</strong>: Run <code>git --version</code></li>
+            </ul>
+        </li>
+    </ol>
+
+    <h3>System Requirements</h3>
+    <ul>
+        <li><strong>RAM</strong>: Minimum 4GB (8GB recommended)</li>
+        <li><strong>Disk Space</strong>: At least 5GB free space</li>
+        <li><strong>Operating System</strong>: Windows 10+, macOS 10.15+, or Linux (Ubuntu 20.04+)</li>
+    </ul>
+
+    <h2>🚀 Quick Start Guide</h2>
+
+    <h3>Step 1: Get the Code</h3>
+    
+    <p>If you have the code in a Git repository:</p>
+    <pre><code>git clone &lt;repository-url&gt;
+cd payroll</code></pre>
+    
+    <p>If you have the code as a ZIP file:</p>
+    <ol>
+        <li>Extract the ZIP file to a folder</li>
+        <li>Open a terminal in that folder</li>
+    </ol>
+
+    <h3>Step 2: Start the Application</h3>
+    
+    <p><strong>That's it!</strong> Just run this single command:</p>
+    <pre><code>docker compose up -d</code></pre>
+    
+    <p>This command will:</p>
+    <ul>
+        <li>Download all required Docker images (if not already present)</li>
+        <li>Build the application containers</li>
+        <li>Start the SQL Server database</li>
+        <li>Initialize the database with tables and data</li>
+        <li>Start the backend API server</li>
+        <li>Start the frontend web application</li>
+    </ul>
+    
+    <div class="note">
+        <strong>Note</strong>: The first time you run this command, it may take 5-10 minutes to download images and build the application. Subsequent starts will be much faster.
+    </div>
+
+    <h3>Step 3: Access the Application</h3>
+    
+    <p>Once all containers are running, open your web browser and navigate to:</p>
+    <ul>
+        <li><strong>Frontend (Web Application)</strong>: <a href="http://localhost:3000">http://localhost:3000</a></li>
+        <li><strong>Backend API</strong>: <a href="http://localhost:4000">http://localhost:4000</a></li>
+        <li><strong>Database</strong>: localhost:1435 (SQL Server)</li>
+    </ul>
+
+    <h3>Step 4: Verify Everything is Running</h3>
+    
+    <p>Check the status of all containers:</p>
+    <pre><code>docker compose ps</code></pre>
+    
+    <p>You should see all services with status "Up" or "running".</p>
+    
+    <p>View logs if needed:</p>
+    <pre><code>docker compose logs -f</code></pre>
+    
+    <p>Press <code>Ctrl+C</code> to exit the logs view.</p>
+
+    <h2>📝 Common Commands</h2>
+
+    <h3>Start the Application</h3>
+    <pre><code>docker compose up -d</code></pre>
+    <p>The <code>-d</code> flag runs containers in the background (detached mode).</p>
+
+    <h3>Stop the Application</h3>
+    <pre><code>docker compose down</code></pre>
+
+    <h3>Restart the Application</h3>
+    <pre><code>docker compose restart</code></pre>
+
+    <h3>View Logs</h3>
+    <pre><code># All services
+docker compose logs -f
+
+# Specific service (backend, frontend, sqlserver)
+docker compose logs -f backend
+docker compose logs -f frontend
+docker compose logs -f sqlserver</code></pre>
+
+    <h3>Rebuild After Code Changes</h3>
+    <pre><code>docker compose up -d --build</code></pre>
+
+    <h3>Stop and Remove Everything (including data)</h3>
+    <pre><code>docker compose down -v</code></pre>
+    <div class="warning">
+        <strong>⚠️ Warning</strong>: This will delete all database data!
+    </div>
+
+    <h2>🏗️ Application Architecture</h2>
+    
+    <p>The application consists of the following services:</p>
+    
+    <ol>
+        <li><strong>SQL Server Database</strong> (<code>sqlserver</code>)
+            <ul>
+                <li>Stores all application data</li>
+                <li>Port: 1435 (mapped from container port 1433)</li>
+                <li>Default credentials: <code>sa</code> / <code>MyStrongPass123!</code></li>
+            </ul>
+        </li>
+        <li><strong>Backend API</strong> (<code>backend</code>)
+            <ul>
+                <li>NestJS REST API</li>
+                <li>Port: 4000</li>
+                <li>Handles business logic, authentication, and data processing</li>
+            </ul>
+        </li>
+        <li><strong>Frontend</strong> (<code>frontend</code>)
+            <ul>
+                <li>Next.js web application</li>
+                <li>Port: 3000</li>
+                <li>User interface for the payroll system</li>
+            </ul>
+        </li>
+        <li><strong>Nginx</strong> (<code>nginx</code>) - Optional
+            <ul>
+                <li>Reverse proxy for production deployments</li>
+                <li>Only runs when using the <code>production</code> profile</li>
+            </ul>
+        </li>
+    </ol>
+
+    <h2>🔧 Configuration</h2>
+
+    <h3>Environment Variables</h3>
+    
+    <p>The application uses default configuration that works out of the box. For production deployments, you may want to customize:</p>
+    
+    <p><strong>Backend Environment Variables</strong> (in <code>docker-compose.yml</code>):</p>
+    <ul>
+        <li><code>CONTROL_DB_URL</code>: Database connection string</li>
+        <li><code>JWT_SECRET</code>: Secret key for JWT tokens (change in production!)</li>
+        <li><code>PORT</code>: Backend server port (default: 4000)</li>
+    </ul>
+    
+    <p><strong>Frontend Environment Variables</strong>:</p>
+    <ul>
+        <li><code>NEXT_PUBLIC_BACKEND_URL</code>: Backend API URL (default: http://localhost:4000)</li>
+    </ul>
+
+    <h3>Database Password</h3>
+    
+    <p>The default SQL Server password is <code>MyStrongPass123!</code>. To change it:</p>
+    <ol>
+        <li>Edit <code>docker-compose.yml</code></li>
+        <li>Change <code>MSSQL_SA_PASSWORD</code> in the <code>sqlserver</code> service</li>
+        <li>Update <code>CONTROL_DB_URL</code> in the <code>backend</code> service</li>
+        <li>Rebuild and restart: <code>docker compose up -d --build</code></li>
+    </ol>
+
+    <h2>🐛 Troubleshooting</h2>
+
+    <h3>Containers Won't Start</h3>
+    <ol>
+        <li><strong>Check Docker is running</strong>:
+            <pre><code>docker ps</code></pre>
+        </li>
+        <li><strong>Check for port conflicts</strong>:
+            <ul>
+                <li>Ensure ports 3000, 4000, and 1435 are not in use</li>
+                <li>On Windows/Mac, check Docker Desktop is running</li>
+            </ul>
+        </li>
+        <li><strong>View error logs</strong>:
+            <pre><code>docker compose logs</code></pre>
+        </li>
+    </ol>
+
+    <h3>Database Connection Issues</h3>
+    <ol>
+        <li><strong>Wait for database to be ready</strong>:
+            The database initialization may take 1-2 minutes on first start.
+        </li>
+        <li><strong>Check database health</strong>:
+            <pre><code>docker compose ps sqlserver</code></pre>
+        </li>
+        <li><strong>Restart database</strong>:
+            <pre><code>docker compose restart sqlserver</code></pre>
+        </li>
+    </ol>
+
+    <h3>Frontend/Backend Not Loading</h3>
+    <ol>
+        <li><strong>Check if services are running</strong>:
+            <pre><code>docker compose ps</code></pre>
+        </li>
+        <li><strong>Check service logs</strong>:
+            <pre><code>docker compose logs frontend
+docker compose logs backend</code></pre>
+        </li>
+        <li><strong>Rebuild containers</strong>:
+            <pre><code>docker compose up -d --build</code></pre>
+        </li>
+    </ol>
+
+    <h3>Out of Disk Space</h3>
+    
+    <p>Docker images and containers can use significant disk space. To clean up:</p>
+    <pre><code># Remove unused containers, networks, and images
+docker system prune
+
+# Remove all unused data (including volumes - WARNING: deletes data!)
+docker system prune -a --volumes</code></pre>
+
+    <h2>📚 Additional Resources</h2>
+    <ul>
+        <li><strong>Development Setup</strong>: See <code>QUICK_START.md</code> for local development without Docker</li>
+        <li><strong>Docker Deployment</strong>: See <code>DOCKER_DEPLOYMENT.md</code> for production deployment details</li>
+        <li><strong>Database Setup</strong>: See <code>database/init/README.md</code> for database initialization scripts</li>
+    </ul>
+
+    <h2>🆘 Getting Help</h2>
+    
+    <p>If you encounter issues:</p>
+    <ol>
+        <li>Check the logs: <code>docker compose logs</code></li>
+        <li>Verify Docker is running: <code>docker ps</code></li>
+        <li>Ensure all prerequisites are installed correctly</li>
+        <li>Try rebuilding: <code>docker compose up -d --build</code></li>
+    </ol>
+
+    <h2>📄 License</h2>
+    <p>[Your License Here]</p>
+
+    <hr>
+    <p><strong>Made with ❤️ for payroll management</strong></p>
+</body>
+</html>
+
+
+

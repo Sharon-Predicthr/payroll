@@ -61,10 +61,18 @@ export function EditableTable<T extends Record<string, any> = any>({
   }, [initialData]);
 
   const handleAdd = useCallback(async () => {
-    if (!onAdd) return;
+    console.log('=== [EditableTable] handleAdd CALLED ===');
+    if (!onAdd) {
+      console.error('[EditableTable] handleAdd - onAdd is not defined!');
+      return;
+    }
 
     try {
+      console.log('[EditableTable] handleAdd - Calling onAdd...');
       const newRow = await onAdd();
+      console.log('[EditableTable] handleAdd - onAdd returned:', newRow);
+      console.log('[EditableTable] handleAdd - newRow.effective_to:', newRow?.effective_to);
+      
       let newRowIndex = 0;
       
       // Use functional update to get the latest data and call onSave
@@ -86,13 +94,24 @@ export function EditableTable<T extends Record<string, any> = any>({
       
       // Auto-edit the new row
       const newRowId = getRowId(newRow, newRowIndex);
+      console.log('[EditableTable] handleAdd - newRowId:', newRowId);
+      console.log('[EditableTable] handleAdd - Setting editingRow to:', newRowId);
       setEditingRow(newRowId);
-      setEditedData((prev) => ({
-        ...prev,
-        [newRowId]: { ...newRow },
-      }));
+      
+      // Store the new row in editedData - this is what the editor will use
+      setEditedData((prev) => {
+        const updated = {
+          ...prev,
+          [newRowId]: { ...newRow },
+        };
+        console.log('[EditableTable] handleAdd - updated editedData:', updated);
+        console.log('[EditableTable] handleAdd - updated[newRowId]:', updated[newRowId]);
+        console.log('[EditableTable] handleAdd - updated[newRowId].effective_to:', updated[newRowId]?.effective_to);
+        return updated;
+      });
+      console.log('=== [EditableTable] handleAdd COMPLETED ===');
     } catch (error) {
-      console.error("Error adding row:", error);
+      console.error("[EditableTable] handleAdd - Error adding row:", error);
     }
   }, [onAdd, getRowId, onSave]);
 
@@ -245,20 +264,51 @@ export function EditableTable<T extends Record<string, any> = any>({
               data.map((row, index) => {
                 const rowId = getRowId(row, index);
                 const isEditing = editingRow === rowId;
+                // For new rows (id is null), use editedData if it exists, otherwise use row
+                // For existing rows, use editedData if it exists, otherwise use row
                 const edited = editedData[rowId] || row;
                 const displayRow = isEditing ? edited : row;
+                // For editor, always pass the original row (not edited) so it can access original values
+                const originalRow = row;
 
                 return (
                   <tr key={rowId} className="hover:bg-gray-50">
                     {columns.map((column) => {
-                      const value = column.accessor
-                        ? column.accessor(displayRow, index)
-                        : displayRow[column.id];
+                      // For editing rows, prefer editedData value, then row value, then displayRow value
+                      let value;
+                      let rowForEditor = displayRow; // Use displayRow as default
+                      
+                      if (isEditing && editedData[rowId]) {
+                        // For editing rows, ALWAYS use editedData[rowId] - it contains the latest values
+                        // Use hasOwnProperty to include null values (null is a valid value)
+                        if (editedData[rowId].hasOwnProperty(column.id)) {
+                          value = editedData[rowId][column.id];
+                        } else if (originalRow.hasOwnProperty(column.id)) {
+                          value = originalRow[column.id];
+                        } else {
+                          value = displayRow[column.id];
+                        }
+                        // For new rows (id is null), pass editedData[rowId] to editor
+                        // For existing rows, also pass editedData[rowId] so editor has access to all values
+                        rowForEditor = editedData[rowId];
+                        
+                        // Debug log for effective_to column
+                        if (column.id === 'effective_to') {
+                          console.log('[EditableTable] effective_to - rowId:', rowId);
+                          console.log('[EditableTable] effective_to - editedData[rowId].effective_to:', editedData[rowId]?.effective_to);
+                          console.log('[EditableTable] effective_to - value:', value);
+                        }
+                      } else {
+                        // For non-editing rows, use displayRow
+                        value = column.accessor
+                          ? column.accessor(displayRow, index)
+                          : displayRow[column.id];
+                      }
 
                       return (
                         <td key={column.id} className="px-3 py-2 text-sm">
                           {isEditing && column.editor ? (
-                            column.editor(value, displayRow, (newValue) =>
+                            column.editor(value, rowForEditor, (newValue) =>
                               handleFieldChange(rowId, column.id, newValue)
                             )
                           ) : column.render ? (

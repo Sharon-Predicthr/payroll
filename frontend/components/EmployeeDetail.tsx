@@ -134,14 +134,30 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
           data[key] = value;
         }
       });
+      // Ensure full_name is set from first_name and last_name if not already set
+      if (!data.full_name && (data.first_name || data.last_name)) {
+        data.full_name = `${data.first_name || ''} ${data.last_name || ''}`.trim() || undefined;
+      }
       setEmployeeData(data);
     }
   }, [employeeDetail]);
 
   const handleFieldChange = (fieldId: string, value: any) => {
-    setEmployeeData(prev => ({ ...prev, [fieldId]: value }));
-    // Track master changes
-    setMasterChanges(prev => ({ ...prev, [fieldId]: value }));
+    setEmployeeData(prev => {
+      const updated = { ...prev, [fieldId]: value };
+      // Update full_name when first_name or last_name changes
+      if (fieldId === 'first_name' || fieldId === 'last_name') {
+        const firstName = fieldId === 'first_name' ? value : (prev.first_name || '');
+        const lastName = fieldId === 'last_name' ? value : (prev.last_name || '');
+        updated.full_name = `${firstName} ${lastName}`.trim() || undefined;
+        // Also track full_name change
+        setMasterChanges(prevChanges => ({ ...prevChanges, [fieldId]: value, full_name: updated.full_name }));
+      } else {
+        // Track master changes
+        setMasterChanges(prevChanges => ({ ...prevChanges, [fieldId]: value }));
+      }
+      return updated;
+    });
   };
 
   const handleTaxFieldChange = (fieldId: string, value: any) => {
@@ -297,12 +313,25 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
         
         setIsEditing(false);
         
-        // Refresh employee data from server
-        if (onSave) {
-          onSave();
+        // Clear ALL change tracking immediately after successful save
+        setMasterChanges({});
+        setTaxChanges({});
+        setContractsChanges({});
+        setAttendanceChanges({});
+        setBankDetailsChanges({});
+        setPensionChanges({});
+        setPayItemsChanges({});
+        
+        // Update employeeData with saved changes immediately for UI feedback
+        if (Object.keys(masterChanges).length > 0) {
+          setEmployeeData(prev => ({ ...prev, ...masterChanges }));
         }
         
-        // Clear change tracking after a delay to allow UI to update
+        // Refresh employee data from server
+        if (onSave) {
+          await onSave();
+        }
+        
         // The savedTaxValues will be cleared when employeeDetail refreshes
         setTimeout(() => {
           setMasterChanges({});
@@ -371,10 +400,12 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-center gap-3 flex-1 min-w-0">
               <div className="w-12 h-12 bg-primary rounded-full flex items-center justify-center text-white text-lg font-semibold flex-shrink-0">
-                {getInitials(employee.name)}
+                {getInitials(employeeDetail?.full_name || employeeData?.full_name || employee.name)}
               </div>
               <div className="min-w-0 flex-1">
-                <h2 className="text-xl font-semibold text-text-main truncate">{employee.name}</h2>
+                <h2 className="text-xl font-semibold text-text-main truncate">
+                  {employeeDetail?.full_name || employeeData?.full_name || employee.name}
+                </h2>
                 <p className="text-xs text-text-muted mt-0.5 truncate">{employee.position}</p>
                 <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                   <span
@@ -667,10 +698,10 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
             {(() => {
               // Personal fields only - no duplication with Overview
               // Ordered to minimize gaps in the grid layout
-              const personalFieldDefinitions: Record<string, { label: string; type?: EditableField['type']; span?: number; lookupKey?: string }> = {
+              const personalFieldDefinitions: Record<string, { label: string; type?: EditableField['type']; span?: number; lookupKey?: string; readOnly?: boolean }> = {
                 first_name: { label: 'שם פרטי', type: 'text', span: 1 },
                 last_name: { label: 'שם משפחה', type: 'text', span: 1 },
-                full_name: { label: 'שם מלא', type: 'text', span: 1 },
+                full_name: { label: 'שם מלא', type: 'text', span: 1, readOnly: true },
                 email: { label: 'אימייל', type: 'email', span: 1 },
                 phone: { label: 'טלפון', type: 'tel', span: 1 },
                 cell_phone_number: { label: 'מספר טלפון נייד', type: 'tel', span: 1 },
@@ -692,6 +723,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
               
               Object.keys(personalFieldDefinitions).forEach(key => {
                 const def = personalFieldDefinitions[key];
+                // Always get the latest value from employeeData to ensure full_name is updated
                 const value = employeeData.hasOwnProperty(key) ? employeeData[key] : null;
                 
                 const field: EditableField = {
@@ -703,6 +735,8 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                   span: def.span || 1,
                   // Add lookupKey if defined
                   ...(def.lookupKey ? { lookupKey: def.lookupKey } : {}),
+                  // Add disabled if readOnly
+                  ...(def.readOnly ? { disabled: true } : {}),
                 };
                 
                 if (def.span === 2) {
@@ -1896,32 +1930,116 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                 {
                   id: "effective_to",
                   label: "תוקף עד",
-                  editor: (value, row, onChange) => (
-                    <Input
-                      type="date"
-                      value={value ? (value instanceof Date ? value.toISOString().split('T')[0] : String(value).split('T')[0]) : ""}
-                      onChange={(e) => onChange(e.target.value)}
-                      className="min-h-10 h-auto text-sm"
-                    />
-                  ),
+                  editor: (value, row, onChange) => {
+                    console.log('=== [EmployeeDetail] effective_to editor CALLED ===');
+                    console.log('[EmployeeDetail] effective_to editor - value:', value);
+                    console.log('[EmployeeDetail] effective_to editor - typeof value:', typeof value);
+                    console.log('[EmployeeDetail] effective_to editor - row:', row);
+                    console.log('[EmployeeDetail] effective_to editor - row.effective_to:', row?.effective_to);
+                    
+                    // Format the value for date input (YYYY-MM-DD)
+                    let dateValue = "";
+                    
+                    // Use value if it exists (can be string or null)
+                    const effectiveToValue = value;
+                    console.log('[EmployeeDetail] effective_to editor - effectiveToValue:', effectiveToValue);
+                    
+                    if (effectiveToValue) {
+                      if (effectiveToValue instanceof Date) {
+                        dateValue = effectiveToValue.toISOString().split('T')[0];
+                        console.log('[EmployeeDetail] effective_to editor - value is Date, dateValue:', dateValue);
+                      } else if (typeof effectiveToValue === 'string' && effectiveToValue.trim() !== '') {
+                        // If it's already in YYYY-MM-DD format, use it directly
+                        if (/^\d{4}-\d{2}-\d{2}/.test(effectiveToValue)) {
+                          dateValue = effectiveToValue.split('T')[0];
+                          console.log('[EmployeeDetail] effective_to editor - value is YYYY-MM-DD format, dateValue:', dateValue);
+                        } else {
+                          // Try to parse other date formats
+                          const date = new Date(effectiveToValue);
+                          if (!isNaN(date.getTime())) {
+                            dateValue = date.toISOString().split('T')[0];
+                            console.log('[EmployeeDetail] effective_to editor - parsed date, dateValue:', dateValue);
+                          } else {
+                            console.warn('[EmployeeDetail] effective_to editor - Invalid date string:', effectiveToValue);
+                          }
+                        }
+                      }
+                    } else {
+                      console.warn('[EmployeeDetail] effective_to editor - effectiveToValue is falsy:', effectiveToValue);
+                    }
+                    
+                    console.log('[EmployeeDetail] effective_to editor - FINAL dateValue:', dateValue);
+                    console.log('=== [EmployeeDetail] effective_to editor RETURNING ===');
+                    
+                    return (
+                      <Input
+                        type="date"
+                        value={dateValue}
+                        onChange={(e) => {
+                          console.log('[EmployeeDetail] effective_to editor - onChange called with:', e.target.value);
+                          onChange(e.target.value || null);
+                        }}
+                        className="min-h-10 h-auto text-sm"
+                      />
+                    );
+                  },
                   render: (value) => value ? new Date(value).toLocaleDateString("he-IL") : "N/A",
                 },
               ]}
               data={employeeDetail?.pay_items || []}
-              onAdd={async () => ({
-                id: null,
-                employee_id: employee?.id || employeeDetail?.id || "",
-                item_code: "",
-                pay_item_name: "",
-                is_hour_based: false,
-                amount: null,
-                quantity: null,
-                rate: null,
-                pct: null,
-                comments: "",
-                department_number: null,
-                effective_to: null,
-              })}
+              onAdd={async () => {
+                console.log('=== [EmployeeDetail] onAdd CALLED ===');
+                // Get current period end date for effective_to
+                let periodEndDate: string | null = null;
+                
+                console.log('[EmployeeDetail] onAdd - selectedPeriod:', selectedPeriod);
+                console.log('[EmployeeDetail] onAdd - selectedPeriod?.period_end_date:', selectedPeriod?.period_end_date);
+                console.log('[EmployeeDetail] onAdd - typeof selectedPeriod?.period_end_date:', typeof selectedPeriod?.period_end_date);
+                
+                if (selectedPeriod?.period_end_date) {
+                  try {
+                    let date: Date;
+                    if (selectedPeriod.period_end_date instanceof Date) {
+                      date = selectedPeriod.period_end_date;
+                      console.log('[EmployeeDetail] onAdd - period_end_date is Date:', date);
+                    } else {
+                      date = new Date(selectedPeriod.period_end_date);
+                      console.log('[EmployeeDetail] onAdd - period_end_date is string, parsed to Date:', date);
+                    }
+                    if (!isNaN(date.getTime())) {
+                      periodEndDate = date.toISOString().split('T')[0];
+                      console.log('[EmployeeDetail] onAdd - periodEndDate set to:', periodEndDate);
+                    } else {
+                      console.error('[EmployeeDetail] onAdd - Invalid date:', selectedPeriod.period_end_date);
+                    }
+                  } catch (e) {
+                    console.error('[EmployeeDetail] onAdd - Error parsing period end date:', e);
+                  }
+                } else {
+                  console.warn('[EmployeeDetail] onAdd - No selectedPeriod or period_end_date');
+                  console.warn('[EmployeeDetail] onAdd - selectedPeriod:', selectedPeriod);
+                }
+                
+                const newRow = {
+                  id: null,
+                  employee_id: employee?.id || employeeDetail?.id || "",
+                  item_code: "",
+                  pay_item_name: "",
+                  is_hour_based: false,
+                  amount: null,
+                  quantity: null,
+                  rate: null,
+                  pct: 0,
+                  comments: "",
+                  department_number: null,
+                  effective_to: periodEndDate,
+                };
+                
+                console.log('[EmployeeDetail] onAdd - newRow:', newRow);
+                console.log('[EmployeeDetail] onAdd - newRow.effective_to:', newRow.effective_to);
+                console.log('=== [EmployeeDetail] onAdd RETURNING ===');
+                return newRow;
+              }}
               onUpdate={async (row, index) => {
                 // TODO: Implement API call
                 console.log("Updating pay item:", row);

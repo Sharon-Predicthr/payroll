@@ -1,296 +1,359 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useTranslations } from 'next-intl';
 import { PageShell } from "@/components/PageShell";
+import { DashboardChart } from "@/components/DashboardChart";
+import { DashboardSelectableChart } from "@/components/DashboardSelectableChart";
+import { usePayrollPeriod } from "@/contexts/PayrollPeriodContext";
+import { getAuthHeader } from "@/lib/auth";
 
 // Force dynamic rendering
 export const dynamic = 'force-dynamic';
 
+interface DashboardKPIs {
+  employees_paid: number;
+  gross_payroll_month: number;
+  average_payroll_month: number;
+  average_tariff_daily: number;
+  average_job_percent: number;
+  vacation_balance_debit: number;
+  sick_balance_debit: number;
+  havraa_balance_debit: number;
+  employer_cost_month: number;
+  employer_cost_without_hr_month: number;
+  employer_cost_with_hr_month: number;
+  gross_net_payment_month: number;
+  average_net_payment_month: number;
+  audit_errors: number;
+  audit_warnings: number;
+}
+
+interface DepartmentBreakdown {
+  department_number: number;
+  department_name: string;
+  employees_paid: number;
+  gross_payroll_month: number;
+  average_payroll_month: number;
+  average_tariff_daily: number;
+  average_job_percent: number;
+  vacation_balance_debit: number;
+  sick_balance_debit: number;
+  havraa_balance_debit: number;
+  employer_cost_month: number;
+  employer_cost_with_hr_month: number;
+  gross_net_payment_month: number;
+  average_net_payment_month: number;
+}
+
+interface CostsTrend {
+  period_id: string;
+  employees_paid: number;
+  gross_payroll_month: number;
+  average_payroll_month: number;
+  average_tariff_daily: number;
+  average_job_percent: number;
+  vacation_balance_debit: number;
+  sick_balance_debit: number;
+  havraa_balance_debit: number;
+  employer_cost_month: number;
+  employer_cost_with_hr_month: number;
+  gross_net_payment_month: number;
+  average_net_payment_month: number;
+}
+
+// Format currency values
+const formatCurrency = (value: number) => {
+  return new Intl.NumberFormat('he-IL', {
+    style: 'currency',
+    currency: 'ILS',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(value);
+};
+
+// Format percentage values
+const formatPercent = (value: number) => {
+  return `${value.toFixed(1)}%`;
+};
+
 export default function DashboardPage() {
-  const t = useTranslations('dashboard');
-  const [selectedTimeRange, setSelectedTimeRange] = useState("1M");
+  const { selectedPeriod } = usePayrollPeriod();
+  const [kpis, setKPIs] = useState<DashboardKPIs | null>(null);
+  const [departmentBreakdown, setDepartmentBreakdown] = useState<DepartmentBreakdown[]>([]);
+  const [costsTrends, setCostsTrends] = useState<CostsTrend[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const todos = [
-    { id: "1", text: "Review pending payroll approvals", completed: false },
-    { id: "2", text: "Update employee tax information", completed: false },
-    { id: "3", text: "Process Q1 bonus payments", completed: true },
-    { id: "4", text: "Reconcile bank statements", completed: false },
-  ];
+  // Fetch all dashboard data in parallel
+  useEffect(() => {
+    const fetchDashboardData = async () => {
+      if (!selectedPeriod?.period_id) {
+        setLoading(false);
+        return;
+      }
 
-  const insights = [
-    { type: "warning", text: "2 employees have incomplete tax profiles" },
-    { type: "info", text: "Payroll processing time improved by 15% this month" },
-    { type: "success", text: "All compliance checks passed for Q1" },
-  ];
+      try {
+        setLoading(true);
+        setError(null);
 
-  const recentPayrolls = [
-    { period: "March 2024", amount: "$58,764.25", status: "Paid", date: "Mar 1, 2024" },
-    { period: "February 2024", amount: "$55,230.10", status: "Paid", date: "Feb 1, 2024" },
-    { period: "January 2024", amount: "$52,145.80", status: "Paid", date: "Jan 1, 2024" },
-  ];
+        const authHeader = getAuthHeader();
+        if (!authHeader) {
+          throw new Error("לא מאומת - נא להתחבר מחדש");
+        }
+
+        const periodId = selectedPeriod.period_id;
+
+        // Fetch all 3 endpoints in parallel for faster loading
+        const [kpisResponse, departmentsResponse, trendsResponse] = await Promise.all([
+          fetch(`/api/dashboard/kpis?period_id=${encodeURIComponent(periodId)}`, {
+            headers: { Authorization: authHeader },
+          }),
+          fetch(`/api/dashboard/departments?period_id=${encodeURIComponent(periodId)}`, {
+            headers: { Authorization: authHeader },
+          }),
+          fetch(`/api/dashboard/trends?period_id=${encodeURIComponent(periodId)}`, {
+            headers: { Authorization: authHeader },
+          }),
+        ]);
+
+        // Handle KPIs response
+        if (!kpisResponse.ok) {
+          const errorData = await kpisResponse.json().catch(() => ({}));
+          throw new Error(errorData.message || "שגיאה בטעינת KPIs");
+        }
+        const kpisData = await kpisResponse.json();
+        if (kpisData.success && kpisData.data) {
+          setKPIs(kpisData.data);
+        }
+
+        // Handle Departments response
+        if (!departmentsResponse.ok) {
+          const errorData = await departmentsResponse.json().catch(() => ({}));
+          console.error("Error fetching departments:", errorData);
+        } else {
+          const departmentsData = await departmentsResponse.json();
+          if (departmentsData.success && departmentsData.data) {
+            setDepartmentBreakdown(departmentsData.data);
+          }
+        }
+
+        // Handle Trends response
+        if (!trendsResponse.ok) {
+          const errorData = await trendsResponse.json().catch(() => ({}));
+          console.error("Error fetching trends:", errorData);
+        } else {
+          const trendsData = await trendsResponse.json();
+          if (trendsData.success && trendsData.data) {
+            setCostsTrends(trendsData.data);
+          }
+        }
+
+        setLoading(false);
+      } catch (err: any) {
+        console.error('[DashboardPage] Error fetching dashboard data:', err);
+        setError(err.message || 'שגיאה בטעינת נתוני הדשבורד');
+        setLoading(false);
+      }
+    };
+
+    fetchDashboardData();
+  }, [selectedPeriod?.period_id]);
+
+  // Prepare KPIs chart data
+  const kpisChartData = useMemo(() => {
+    if (!kpis) return [];
+
+    return [
+      { label: 'עובדים משולמים', value: kpis.employees_paid, color: 'bg-blue-500' },
+      { label: 'משכורת ברוטו', value: kpis.gross_payroll_month, color: 'bg-green-500' },
+      { label: 'ממוצע שכר', value: kpis.average_payroll_month, color: 'bg-purple-500' },
+      { label: 'ממוצע תעריף יומי', value: kpis.average_tariff_daily, color: 'bg-yellow-500' },
+      { label: 'ממוצע אחוז משרה', value: kpis.average_job_percent, color: 'bg-pink-500' },
+      { label: 'חוב חופשה', value: kpis.vacation_balance_debit, color: 'bg-orange-500' },
+      { label: 'חוב מחלה', value: kpis.sick_balance_debit, color: 'bg-red-500' },
+      { label: 'חוב הבראה', value: kpis.havraa_balance_debit, color: 'bg-teal-500' },
+      { label: 'עלות מעביד', value: kpis.employer_cost_month, color: 'bg-indigo-500' },
+      { label: 'עלות מעביד ללא HR', value: kpis.employer_cost_without_hr_month, color: 'bg-cyan-500' },
+      { label: 'עלות מעביד כולל HR', value: kpis.employer_cost_with_hr_month, color: 'bg-lime-500' },
+      { label: 'תשלום נטו', value: kpis.gross_net_payment_month, color: 'bg-emerald-500' },
+      { label: 'ממוצע נטו', value: kpis.average_net_payment_month, color: 'bg-violet-500' },
+      { label: 'שגיאות ביקורת', value: kpis.audit_errors, color: 'bg-rose-500' },
+      { label: 'אזהרות ביקורת', value: kpis.audit_warnings, color: 'bg-amber-500' },
+    ];
+  }, [kpis]);
+
+  // Prepare department breakdown chart data
+  const departmentChartData = useMemo(() => {
+    return departmentBreakdown.map(dept => ({
+      label: dept.department_name || `מחלקה ${dept.department_number}`,
+      employees_paid: dept.employees_paid,
+      gross_payroll_month: dept.gross_payroll_month,
+      average_payroll_month: dept.average_payroll_month,
+      average_tariff_daily: dept.average_tariff_daily,
+      average_job_percent: dept.average_job_percent,
+      vacation_balance_debit: dept.vacation_balance_debit,
+      sick_balance_debit: dept.sick_balance_debit,
+      havraa_balance_debit: dept.havraa_balance_debit,
+      employer_cost_month: dept.employer_cost_month,
+      employer_cost_with_hr_month: dept.employer_cost_with_hr_month,
+      gross_net_payment_month: dept.gross_net_payment_month,
+      average_net_payment_month: dept.average_net_payment_month,
+    }));
+  }, [departmentBreakdown]);
+
+  // Prepare trends chart data
+  const trendsChartData = useMemo(() => {
+    return costsTrends.map(trend => ({
+      label: trend.period_id,
+      employees_paid: trend.employees_paid,
+      gross_payroll_month: trend.gross_payroll_month,
+      average_payroll_month: trend.average_payroll_month,
+      average_tariff_daily: trend.average_tariff_daily,
+      average_job_percent: trend.average_job_percent,
+      vacation_balance_debit: trend.vacation_balance_debit,
+      sick_balance_debit: trend.sick_balance_debit,
+      havraa_balance_debit: trend.havraa_balance_debit,
+      employer_cost_month: trend.employer_cost_month,
+      employer_cost_with_hr_month: trend.employer_cost_with_hr_month,
+      gross_net_payment_month: trend.gross_net_payment_month,
+      average_net_payment_month: trend.average_net_payment_month,
+    }));
+  }, [costsTrends]);
+
+  // Format value for KPIs chart (mix of currency, numbers, and percentages)
+  const formatKPIsValue = (value: number, index: number) => {
+    // Index-based formatting (matching the order in kpisChartData)
+    // 0: employees_paid (number)
+    // 1: gross_payroll_month (currency)
+    // 2: average_payroll_month (currency)
+    // 3: average_tariff_daily (currency)
+    // 4: average_job_percent (percent)
+    // 5-7: vacation/sick/havraa_balance_debit (currency)
+    // 8-10: employer_cost_* (currency)
+    // 11-12: gross/average_net_payment_month (currency)
+    // 13-14: audit_errors/warnings (number)
+
+    const currencyIndices = [1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12];
+    const percentIndices = [4];
+    
+    if (percentIndices.includes(index)) {
+      return formatPercent(value);
+    } else if (currencyIndices.includes(index)) {
+      return formatCurrency(value);
+    } else {
+      return value.toLocaleString();
+    }
+  };
+
+  if (loading) {
+    return (
+      <PageShell>
+        <div className="flex items-center justify-center h-96">
+          <div className="text-center">
+            <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-primary mb-4"></div>
+            <p className="text-text-muted">טוען נתוני דשבורד...</p>
+          </div>
+        </div>
+      </PageShell>
+    );
+  }
+
+  if (error) {
+    return (
+      <PageShell>
+        <div className="bg-red-50 border border-red-200 rounded-xl p-6">
+          <p className="text-red-800">{error}</p>
+        </div>
+      </PageShell>
+    );
+  }
+
+  if (!selectedPeriod) {
+    return (
+      <PageShell>
+        <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-6">
+          <p className="text-yellow-800">נא לבחור תקופת שכר להצגת הדשבורד</p>
+        </div>
+      </PageShell>
+    );
+  }
 
   return (
     <PageShell>
       <div className="space-y-6">
-        {/* 2-Column Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-10 gap-6">
-          {/* Left Column (70%) */}
-          <div className="lg:col-span-7 space-y-6">
-            {/* Upcoming Payroll Card */}
-            <div className="bg-card-bg rounded-xl border border-gray-200 shadow-sm p-6">
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-lg font-semibold text-text-main">{t('upcomingPayroll.title')}</h2>
-                <div className="flex items-center gap-2">
-                  {["1M", "3M", "6M", "1Y"].map((range) => (
-                    <button
-                      key={range}
-                      onClick={() => setSelectedTimeRange(range)}
-                      className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
-                        selectedTimeRange === range
-                          ? "bg-primary text-white"
-                          : "bg-gray-100 text-text-muted hover:bg-gray-200"
-                      }`}
-                    >
-                      {range}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-6 mb-6">
-                <div>
-                  <p className="text-sm text-text-muted mb-1">Pay Period</p>
-                  <p className="text-lg font-semibold text-text-main">March 1-31, 2024</p>
-                </div>
-                <div>
-                  <p className="text-sm text-text-muted mb-1">Payment Date</p>
-                  <p className="text-lg font-semibold text-text-main">April 5, 2024</p>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200">
-                <div className="flex items-center gap-3">
-                  <span className="px-3 py-1 bg-orange-100 text-orange-700 rounded-full text-xs font-medium">
-                    PENDING
-                  </span>
-                  <span className="text-sm text-text-muted">Total: $62,450.00</span>
-                </div>
-                <button className="bg-primary text-white px-5 py-2.5 rounded-lg font-medium hover:bg-primary/90 transition-colors text-sm">
-                  {t('upcomingPayroll.runPayroll')}
-                </button>
-              </div>
-            </div>
-
-            {/* Payroll Actions Card */}
-            <div className="bg-card-bg rounded-xl border border-gray-200 shadow-sm p-6">
-              <h2 className="text-lg font-semibold text-text-main mb-4">{t('payrollActions.title')}</h2>
-              <div className="grid grid-cols-2 gap-4">
-                <button className="flex items-center justify-center gap-2 px-6 py-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-primary hover:bg-blue-50 transition-colors text-sm font-medium text-text-main">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                  </svg>
-                  {t('payrollActions.startNewCycle')}
-                </button>
-                <button className="flex items-center justify-center gap-2 px-6 py-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-primary hover:bg-blue-50 transition-colors text-sm font-medium text-text-main">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                  </svg>
-                  {t('payrollActions.calculatePaycheck')}
-                </button>
-              </div>
-            </div>
-
-            {/* Recent Payroll Card */}
-            <div className="bg-card-bg rounded-xl border border-gray-200 shadow-sm p-6">
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-lg font-semibold text-text-main">{t('recentPayroll.title')}</h2>
-                <a href="#" className="text-sm text-primary hover:text-primary/80 font-medium">
-                  View all
-                </a>
-              </div>
-
-              {/* Simple Bar Chart */}
-              <div className="h-48 mb-6 flex items-end justify-between gap-2">
-                {[65, 55, 70, 60, 75, 65, 80].map((height, index) => (
-                  <div key={index} className="flex-1 flex flex-col items-center">
-                    <div
-                      className="w-full bg-primary rounded-t-lg mb-2"
-                      style={{ height: `${height}%` }}
-                    ></div>
-                    <span className="text-xs text-text-muted">
-                      {["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul"][index]}
-                    </span>
-                  </div>
-                ))}
-              </div>
-
-              {/* Summary Table */}
-              <div className="border-t border-gray-200 pt-4">
-                <table className="w-full">
-                  <thead>
-                    <tr className="text-left rtl:text-right text-xs font-medium text-text-muted uppercase">
-                      <th className="pb-2">Period</th>
-                      <th className="pb-2">Amount</th>
-                      <th className="pb-2">Status</th>
-                      <th className="pb-2">Date</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200">
-                    {recentPayrolls.map((payroll, index) => (
-                      <tr key={index} className="hover:bg-gray-50">
-                        <td className="py-3 text-sm font-medium text-text-main">{payroll.period}</td>
-                        <td className="py-3 text-sm text-text-main">{payroll.amount}</td>
-                        <td className="py-3">
-                          <span className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-medium">
-                            {payroll.status}
-                          </span>
-                        </td>
-                        <td className="py-3 text-sm text-text-muted">{payroll.date}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Insights Card */}
-            <div className="bg-card-bg rounded-xl border border-gray-200 shadow-sm p-6">
-              <h2 className="text-lg font-semibold text-text-main mb-4">{t('insights.title')}</h2>
-              <div className="space-y-3">
-                {insights.map((insight, index) => (
-                  <div
-                    key={index}
-                    className={`p-4 rounded-lg border ${
-                      insight.type === "warning"
-                        ? "bg-orange-50 border-orange-200"
-                        : insight.type === "info"
-                        ? "bg-blue-50 border-blue-200"
-                        : "bg-green-50 border-green-200"
-                    }`}
-                  >
-                    <div className="flex items-start gap-3">
-                      <div
-                        className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${
-                          insight.type === "warning"
-                            ? "bg-orange-100"
-                            : insight.type === "info"
-                            ? "bg-blue-100"
-                            : "bg-green-100"
-                        }`}
-                      >
-                        {insight.type === "warning" && (
-                          <svg className="w-4 h-4 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                          </svg>
-                        )}
-                        {insight.type === "info" && (
-                          <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                          </svg>
-                        )}
-                        {insight.type === "success" && (
-                          <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                          </svg>
-                        )}
-                      </div>
-                      <p className="text-sm text-text-main flex-1">{insight.text}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Right Column (30%) */}
-          <div className="lg:col-span-3 space-y-6">
-            {/* Top To-Dos Card */}
-            <div className="bg-card-bg rounded-xl border border-gray-200 shadow-sm p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold text-text-main">{t('todos.title')}</h2>
-                <button className="text-sm text-primary hover:text-primary/80 font-medium">
-                  View all
-                </button>
-              </div>
-              <div className="space-y-3">
-                {todos.map((todo) => (
-                  <label
-                    key={todo.id}
-                    className="flex items-start gap-3 p-2 rounded-lg hover:bg-gray-50 cursor-pointer"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={todo.completed}
-                      onChange={() => {}}
-                      className="mt-1 w-4 h-4 text-primary border-gray-300 rounded focus:ring-primary"
-                    />
-                    <span
-                      className={`text-sm flex-1 ${
-                        todo.completed ? "text-text-muted line-through" : "text-text-main"
-                      }`}
-                    >
-                      {todo.text}
-                    </span>
-                  </label>
-                ))}
-              </div>
-              <button className="mt-4 w-full text-sm text-primary hover:text-primary/80 font-medium text-center">
-                + Add new task
-              </button>
-            </div>
-
-            {/* Mini Calendar Card */}
-            <div className="bg-card-bg rounded-xl border border-gray-200 shadow-sm p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold text-text-main">{t('calendar.title')}</h2>
-                <div className="flex items-center gap-2">
-                  <button className="p-1 hover:bg-gray-100 rounded">
-                    <svg className="w-4 h-4 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                    </svg>
-                  </button>
-                  <button className="p-1 hover:bg-gray-100 rounded">
-                    <svg className="w-4 h-4 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-              <div className="text-center mb-4">
-                <p className="text-sm font-semibold text-text-main">March 2024</p>
-              </div>
-              <div className="grid grid-cols-7 gap-1 mb-2">
-                {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((day) => (
-                  <div key={day} className="text-xs font-medium text-text-muted text-center py-1">
-                    {day}
-                  </div>
-                ))}
-              </div>
-              <div className="grid grid-cols-7 gap-1">
-                {[
-                  null, null, null, null, null, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
-                  20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
-                ].map((date, index) => (
-                  <div
-                    key={index}
-                    className={`aspect-square flex items-center justify-center text-xs ${
-                      date === 5
-                        ? "bg-primary text-white rounded-full font-semibold"
-                        : date
-                        ? "text-text-main hover:bg-gray-100 rounded cursor-pointer"
-                        : "text-gray-300"
-                    }`}
-                  >
-                    {date}
-                  </div>
-                ))}
-              </div>
-            </div>
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-text-main">דשבורד</h1>
+            <p className="text-text-muted mt-1">
+              תקופת שכר: {selectedPeriod.period_description || selectedPeriod.period_id}
+            </p>
           </div>
         </div>
+
+        {/* KPIs Chart */}
+        <DashboardChart
+          title="מדדי ביצועים מרכזיים"
+          data={kpisChartData}
+          height={400}
+          formatValue={(value, index) => {
+            if (index !== undefined) {
+              return formatKPIsValue(value, index);
+            }
+            // Fallback: try to find index by value
+            const dataIndex = kpisChartData.findIndex(d => d.value === value);
+            if (dataIndex >= 0) {
+              return formatKPIsValue(value, dataIndex);
+            }
+            return value.toLocaleString();
+          }}
+        />
+
+        {/* Department Breakdown Chart */}
+        <DashboardSelectableChart
+          title="פילוח לפי מחלקות"
+          data={departmentChartData}
+          metrics={[
+            { key: 'employees_paid', label: 'מספר עובדים משולמים', formatValue: (v) => v.toLocaleString() },
+            { key: 'gross_payroll_month', label: 'משכורת ברוטו', formatValue: formatCurrency },
+            { key: 'average_payroll_month', label: 'ממוצע שכר', formatValue: formatCurrency },
+            { key: 'average_tariff_daily', label: 'ממוצע תעריף יומי', formatValue: formatCurrency },
+            { key: 'average_job_percent', label: 'ממוצע אחוז משרה', formatValue: formatPercent },
+            { key: 'vacation_balance_debit', label: 'חוב חופשה', formatValue: formatCurrency },
+            { key: 'sick_balance_debit', label: 'חוב מחלה', formatValue: formatCurrency },
+            { key: 'havraa_balance_debit', label: 'חוב הבראה', formatValue: formatCurrency },
+            { key: 'employer_cost_month', label: 'עלות מעביד', formatValue: formatCurrency },
+            { key: 'employer_cost_with_hr_month', label: 'עלות מעביד כולל HR', formatValue: formatCurrency },
+            { key: 'gross_net_payment_month', label: 'תשלום נטו', formatValue: formatCurrency },
+            { key: 'average_net_payment_month', label: 'ממוצע נטו', formatValue: formatCurrency },
+          ]}
+          defaultMetric="gross_payroll_month"
+          height={400}
+        />
+
+        {/* Costs Trends Chart */}
+        <DashboardSelectableChart
+          title="מגמות עלויות (12 תקופות אחרונות)"
+          data={trendsChartData}
+          metrics={[
+            { key: 'employees_paid', label: 'מספר עובדים משולמים', formatValue: (v) => v.toLocaleString() },
+            { key: 'gross_payroll_month', label: 'משכורת ברוטו', formatValue: formatCurrency },
+            { key: 'average_payroll_month', label: 'ממוצע שכר', formatValue: formatCurrency },
+            { key: 'average_tariff_daily', label: 'ממוצע תעריף יומי', formatValue: formatCurrency },
+            { key: 'average_job_percent', label: 'ממוצע אחוז משרה', formatValue: formatPercent },
+            { key: 'vacation_balance_debit', label: 'חוב חופשה', formatValue: formatCurrency },
+            { key: 'sick_balance_debit', label: 'חוב מחלה', formatValue: formatCurrency },
+            { key: 'havraa_balance_debit', label: 'חוב הבראה', formatValue: formatCurrency },
+            { key: 'employer_cost_month', label: 'עלות מעביד', formatValue: formatCurrency },
+            { key: 'employer_cost_with_hr_month', label: 'עלות מעביד כולל HR', formatValue: formatCurrency },
+            { key: 'gross_net_payment_month', label: 'תשלום נטו', formatValue: formatCurrency },
+            { key: 'average_net_payment_month', label: 'ממוצע נטו', formatValue: formatCurrency },
+          ]}
+          defaultMetric="gross_payroll_month"
+          height={400}
+        />
       </div>
     </PageShell>
   );
 }
-
