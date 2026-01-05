@@ -100,6 +100,7 @@
       "documents": "Documents & History"
     },
     "filters": {
+      "all": "All Employees",
       "allDepartments": "All Depts",
       "allStatus": "All Status",
       "allCountries": "All Countries",

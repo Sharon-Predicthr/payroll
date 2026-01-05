@@ -25,6 +25,7 @@ export interface LookupSelectProps {
   emptyLabel?: string;
   filter?: Record<string, any>; // Additional filters for the lookup (e.g., branch_code filtered by bank_code)
   cache?: boolean; // Whether to cache the lookup results
+  preserveLeadingZeros?: boolean; // Whether to preserve leading zeros in value (treat as string)
   // Optional overrides (if not using config)
   tableName?: string; // Database table name (if not in config)
   valueKey?: string; // Column name for value (if not in config)
@@ -47,6 +48,7 @@ export function LookupSelect({
   emptyLabel = "ללא",
   filter,
   cache = true,
+  preserveLeadingZeros = false,
   // Optional overrides
   tableName: overrideTableName,
   valueKey: overrideValueKey,
@@ -232,9 +234,12 @@ export function LookupSelect({
             }
 
             // Preserve the original type of code (number or string) for proper matching
-            const finalValue = (typeof code === 'number' || !isNaN(Number(code))) && code !== '' 
-              ? (typeof code === 'number' ? code : Number(code))
-              : code;
+            // If preserveLeadingZeros is true, always treat as string to preserve leading zeros
+            const finalValue = preserveLeadingZeros 
+              ? String(code) // Always string to preserve leading zeros
+              : ((typeof code === 'number' || !isNaN(Number(code))) && code !== '' 
+                ? (typeof code === 'number' ? code : Number(code))
+                : code);
 
             return {
               value: finalValue, // Save the code (preserve type for matching)
@@ -326,9 +331,12 @@ export function LookupSelect({
                   }
                   
                   // Preserve the original type of code for matching
-                  const finalValue = (typeof code === 'number' || !isNaN(Number(code))) && code !== '' 
-                    ? (typeof code === 'number' ? code : Number(code))
-                    : code;
+                  // If preserveLeadingZeros is true, always treat as string to preserve leading zeros
+                  const finalValue = preserveLeadingZeros 
+                    ? String(code) // Always string to preserve leading zeros
+                    : ((typeof code === 'number' || !isNaN(Number(code))) && code !== '' 
+                      ? (typeof code === 'number' ? code : Number(code))
+                      : code);
                   
                   // Check if this value already exists in lookupOptions before adding
                   const alreadyExists = lookupOptions.some(opt => {
@@ -439,9 +447,14 @@ export function LookupSelect({
       if (newValue === "" || newValue === "null") {
         onChange(null);
       } else {
-        // Try to convert to number if the value looks like a number
-        const numValue = Number(newValue);
-        onChange(isNaN(numValue) ? newValue : numValue);
+        // If preserveLeadingZeros is true, always keep as string to preserve leading zeros
+        if (preserveLeadingZeros) {
+          onChange(newValue);
+        } else {
+          // Try to convert to number if the value looks like a number
+          const numValue = Number(newValue);
+          onChange(isNaN(numValue) ? newValue : numValue);
+        }
       }
     }
   };
@@ -516,6 +529,21 @@ export function LookupSelect({
       return "";
     }
     
+    // If preserveLeadingZeros is true, always use string comparison
+    if (preserveLeadingZeros) {
+      const valueStr = String(value);
+      const matchingOption = displayOptions.find(opt => {
+        const optValueStr = String(opt.value);
+        return optValueStr === valueStr;
+      });
+      
+      if (matchingOption) {
+        return String(matchingOption.value);
+      }
+      // If not found, return the value as string to preserve leading zeros
+      return valueStr;
+    }
+    
     // Try to find exact match in displayOptions
     const matchingOption = displayOptions.find(opt => {
       const optValue = opt.value;
@@ -550,7 +578,7 @@ export function LookupSelect({
     
     // Fallback to string conversion
     return String(value);
-  }, [displayOptions, value, lookupKey]);
+  }, [displayOptions, value, lookupKey, preserveLeadingZeros]);
 
   if (loading) {
     return (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useLocale } from "next-intl";
 import { Button } from "@/components/ui/button";
@@ -91,6 +91,14 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
   const [employeeData, setEmployeeData] = useState<Record<string, any>>({});
   const [loadingPayslip, setLoadingPayslip] = useState(false);
   
+  // Memoize filtered attendance data for current period
+  const filteredAttendance = useMemo(() => {
+    const currentPeriodId = selectedPeriod?.period_id;
+    if (!currentPeriodId) return [];
+    const allAttendance = employeeDetail?.attendance || [];
+    return allAttendance.filter((row: any) => row.period_id === currentPeriodId);
+  }, [selectedPeriod?.period_id, employeeDetail?.attendance]);
+  
   // Track changes for each tab
   const [masterChanges, setMasterChanges] = useState<Record<string, any>>({});
   const [taxChanges, setTaxChanges] = useState<Record<string, any>>({});
@@ -180,7 +188,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
       const id = getRowId(row, idx);
       if (!currentIds.has(id)) {
         // Get the actual ID from the row (contract_id, attendance_id, etc.)
-        const actualId = row.contract_id || row.attendance_id || row.bank_detail_id || row.emp_pension_id || row.pay_item_id || id;
+        const actualId = row.contract_id || row.attendance_id || row.emp_pension_id || row.pay_item_id || id;
         deleted.push(actualId);
       }
     });
@@ -586,10 +594,9 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
 
         {/* Tabs - Compact */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="mb-3 h-9">
+            <TabsList className="mb-3 h-9">
             <TabsTrigger value="overview" className="px-3 py-1 text-xs">{t('tabs.overview')}</TabsTrigger>
             <TabsTrigger value="personal" className="px-3 py-1 text-xs">{t('tabs.personal')}</TabsTrigger>
-            <TabsTrigger value="employment" className="px-3 py-1 text-xs">{t('tabs.employment')}</TabsTrigger>
             <TabsTrigger value="payroll" className="px-3 py-1 text-xs">{t('tabs.payroll')}</TabsTrigger>
             <TabsTrigger value="time" className="px-3 py-1 text-xs">{t('tabs.timeAttendance')}</TabsTrigger>
             <TabsTrigger value="tax" className="px-3 py-1 text-xs">מיסים</TabsTrigger>
@@ -601,19 +608,17 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
           <TabsContent value="overview" className="space-y-3">
             {(() => {
               // Define field mappings with labels and types - ordered to minimize gaps
-              const fieldDefinitions: Record<string, { label: string; type?: EditableField['type']; span?: number; lookupKey?: string }> = {
+              const fieldDefinitions: Record<string, { label: string; type?: EditableField['type']; span?: number; lookupKey?: string; readOnly?: boolean }> = {
                 employee_code: { label: 'קוד עובד', type: 'text', span: 1 },
                 department_number: { label: 'מספר מחלקה', type: 'lookup', span: 1, lookupKey: 'department_number' },
                 position: { label: 'תפקיד', type: 'text', span: 1 },
-                job_title: { label: 'כותרת תפקיד', type: 'text', span: 1 },
-                status: { label: 'סטטוס', type: 'text', span: 1 },
-                employment_status: { label: 'סטטוס העסקה', type: 'lookup', span: 1, lookupKey: 'employment_status' },
+                status: { label: 'סטטוס העסקה', type: 'lookup', span: 1, lookupKey: 'employment_status' },
                 hire_date: { label: 'תאריך העסקה', type: 'date', span: 1 },
                 is_active: { label: 'פעיל', type: 'select', span: 1 },
                 site_number: { label: 'מספר אתר', type: 'lookup', span: 1, lookupKey: 'site_number' },
                 employment_percent: { label: 'אחוז העסקה', type: 'number', span: 1 },
-                created_at: { label: 'תאריך יצירה', type: 'date', span: 1 },
-                updated_at: { label: 'תאריך עדכון', type: 'date', span: 1 },
+                created_at: { label: 'תאריך יצירה', type: 'date', span: 1, readOnly: true },
+                updated_at: { label: 'תאריך עדכון', type: 'date', span: 1, readOnly: true },
               };
 
               // Get all fields from employeeData, excluding client_id, personal fields (shown in Personal tab), and related data
@@ -621,7 +626,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                 'client_id', 'id', 'employee_id', 'bank_details', 'pay_items', 'pension_profile', 'tax_profile', 
                 'attendance', 'contracts', 'leave_balances',
                 'first_name', 'last_name', 'full_name', 'email', 'phone', 'cell_phone_number', 
-                'tz_id', 'national_id', 'gender', 'date_of_birth', 'address_line1', 'address_line2', 'city_code', 'zip_code', 'termination_date',
+                'tz_id', 'gender', 'date_of_birth', 'address_line1', 'address_line2', 'city_code', 'zip_code', 'termination_date', 'manager_id',
                 'department_id' // Exclude department_id - we only show department_number with lookup
               ];
               
@@ -652,6 +657,8 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                     } : {}),
                     // Add lookupKey if defined
                     ...(def.lookupKey ? { lookupKey: def.lookupKey } : {}),
+                    // Add disabled if readOnly
+                    ...(def.readOnly ? { disabled: true } : {}),
                   };
                   
                   orderedFields.push(field);
@@ -698,7 +705,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
             {(() => {
               // Personal fields only - no duplication with Overview
               // Ordered to minimize gaps in the grid layout
-              const personalFieldDefinitions: Record<string, { label: string; type?: EditableField['type']; span?: number; lookupKey?: string; readOnly?: boolean }> = {
+              const personalFieldDefinitions: Record<string, { label: string; type?: EditableField['type']; span?: number; lookupKey?: string; readOnly?: boolean; render?: (value: any, isEditing: boolean, onChange: (value: any) => void) => React.ReactNode }> = {
                 first_name: { label: 'שם פרטי', type: 'text', span: 1 },
                 last_name: { label: 'שם משפחה', type: 'text', span: 1 },
                 full_name: { label: 'שם מלא', type: 'text', span: 1, readOnly: true },
@@ -706,13 +713,49 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                 phone: { label: 'טלפון', type: 'tel', span: 1 },
                 cell_phone_number: { label: 'מספר טלפון נייד', type: 'tel', span: 1 },
                 tz_id: { label: 'תעודת זהות', type: 'text', span: 1 },
-                national_id: { label: 'מספר זהות', type: 'text', span: 1 },
-                gender: { label: 'מין', type: 'text', span: 1 },
+                gender: { label: 'מין', type: 'lookup', span: 1, lookupKey: 'gender' },
                 date_of_birth: { label: 'תאריך לידה', type: 'date', span: 1 },
                 address_line1: { label: 'כתובת שורה 1', type: 'text', span: 2 },
                 address_line2: { label: 'כתובת שורה 2', type: 'text', span: 2 },
-                city_code: { label: 'קוד עיר', type: 'text', span: 1 },
+                city_code: { label: 'קוד עיר', type: 'lookup', span: 1, lookupKey: 'city_code' },
                 zip_code: { label: 'מיקוד', type: 'text', span: 1 },
+                manager_id: { 
+                  label: 'מנהל', 
+                  type: 'lookup', 
+                  span: 1, 
+                  lookupKey: 'manager_id',
+                  render: (value, isEditing, onChange) => {
+                    if (!isEditing) {
+                      // Read-only mode - use LookupSelect
+                      return (
+                        <LookupSelect
+                          lookupKey="manager_id"
+                          value={value}
+                          onChange={() => {}}
+                          disabled={true}
+                          className="min-h-10 h-auto text-sm"
+                        />
+                      );
+                    }
+                    // Edit mode - use LookupGridSelect with grid view
+                    return (
+                      <LookupGridSelect
+                        key={`manager-${value || 'empty'}-${isEditing}`}
+                        lookupKey="manager_id"
+                        value={value}
+                        onChange={onChange}
+                        className="min-h-10 h-auto text-sm"
+                        searchable={true}
+                        searchFields={['employee_id', 'first_name', 'last_name']}
+                        displayColumns={['employee_id', 'label']}
+                        columnLabels={{
+                          'employee_id': 'קוד עובד',
+                          'label': 'שם מלא',
+                        }}
+                      />
+                    );
+                  },
+                },
                 termination_date: { label: 'תאריך סיום העסקה', type: 'date', span: 1 },
               };
 
@@ -737,6 +780,8 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                   ...(def.lookupKey ? { lookupKey: def.lookupKey } : {}),
                   // Add disabled if readOnly
                   ...(def.readOnly ? { disabled: true } : {}),
+                  // Add render function if defined
+                  ...(def.render ? { render: def.render } : {}),
                 };
                 
                 if (def.span === 2) {
@@ -761,77 +806,6 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
             })()}
           </TabsContent>
 
-          {/* Employment Tab - Compact */}
-          <TabsContent value="employment" className="space-y-3">
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-text-muted mb-1">{t('hireDate')}</label>
-                {isEditing ? (
-                  <Input 
-                    type="date" 
-                    defaultValue={formatDateOnly(employeeDetail?.hire_date)} 
-                    className="h-8 text-sm" 
-                  />
-                ) : (
-                  <p className="text-sm text-text-main py-1.5">
-                    {formatDateOnly(employeeDetail?.hire_date) || "N/A"}
-                  </p>
-                )}
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-text-muted mb-1">{t('department')}</label>
-                {isEditing ? (
-                  <Select defaultValue={employee.department} className="h-8 text-sm">
-                    <option>Engineering</option>
-                    <option>Marketing</option>
-                    <option>Sales</option>
-                    <option>HR</option>
-                  </Select>
-                ) : (
-                  <p className="text-sm text-text-main py-1.5">{employee.department}</p>
-                )}
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-text-muted mb-1">{t('position')}</label>
-                {isEditing ? (
-                  <Input defaultValue={employee.position} className="h-8 text-sm" />
-                ) : (
-                  <p className="text-sm text-text-main py-1.5">{employee.position}</p>
-                )}
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-text-muted mb-1">
-                  {t('employmentType')}
-                </label>
-                {isEditing ? (
-                  <Select defaultValue={employee.employmentType} className="h-8 text-sm">
-                    <option>{t('employmentTypes.fullTime')}</option>
-                    <option>{t('employmentTypes.partTime')}</option>
-                    <option>{t('employmentTypes.contract')}</option>
-                  </Select>
-                ) : (
-                  <p className="text-sm text-text-main py-1.5">{employee.employmentType}</p>
-                )}
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-text-muted mb-1">{t('fields.manager')}</label>
-                {isEditing ? (
-                  <Input defaultValue="Jane Manager" className="h-8 text-sm" />
-                ) : (
-                  <p className="text-sm text-text-main py-1.5">Jane Manager</p>
-                )}
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-text-muted mb-1">{t('fields.workLocation')}</label>
-                {isEditing ? (
-                  <Input defaultValue="New York Office" className="h-8 text-sm" />
-                ) : (
-                  <p className="text-sm text-text-main py-1.5">New York Office</p>
-                )}
-              </div>
-            </div>
-          </TabsContent>
-
           {/* Payroll Tab - Contracts and Bank Details */}
           <TabsContent value="payroll" className="space-y-4">
             {/* Contracts */}
@@ -839,32 +813,6 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
               <h3 className="text-sm font-semibold text-text-main mb-2">חוזי העסקה</h3>
               <EditableTable
                 columns={[
-                  {
-                    id: "start_date",
-                    label: "תאריך התחלה",
-                    editor: (value, row, onChange) => (
-                      <Input
-                        type="date"
-                        value={formatDateOnly(value)}
-                        onChange={(e) => onChange(e.target.value)}
-                        className="min-h-10 h-auto text-sm"
-                      />
-                    ),
-                    render: (value) => formatDateOnly(value) || "N/A",
-                  },
-                  {
-                    id: "end_date",
-                    label: "תאריך סיום",
-                    editor: (value, row, onChange) => (
-                      <Input
-                        type="date"
-                        value={formatDateOnly(value)}
-                        onChange={(e) => onChange(e.target.value)}
-                        className="min-h-10 h-auto text-sm"
-                      />
-                    ),
-                    render: (value) => formatDateOnly(value) || "N/A",
-                  },
                   {
                     id: "employment_type",
                     label: "סוג העסקה",
@@ -933,12 +881,12 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       <Input
                         type="number"
                         step="0.01"
-                        value={value || ""}
-                        onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+                        value={value ?? ""}
+                        onChange={(e) => onChange(e.target.value !== "" ? (e.target.value ? Number(e.target.value) : null) : null)}
                         className="min-h-10 h-auto text-sm"
                       />
                     ),
-                    render: (value) => value ? `${Number(value).toFixed(2)}%` : "N/A",
+                    render: (value) => value !== null && value !== undefined ? `${Number(value).toFixed(2)}%` : "N/A",
                   },
                   {
                     id: "annual_vacation_days",
@@ -999,8 +947,6 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                 onAdd={async () => ({
                   id: null,
                   employee_id: employee?.id || employeeDetail?.id || "",
-                  start_date: null,
-                  end_date: null,
                   employment_type: "",
                   base_salary_monthly: null,
                   standard_hours_per_month: null,
@@ -1043,33 +989,85 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                   {
                     id: "bank_code",
                     label: "קוד בנק",
-                    editor: (value, row, onChange) => (
+                    editor: (value, row, onChange) => {
+                      // When bank changes, we need to clear branch_code
+                      // The onChange callback is passed from EditableTable, which handles field changes
+                      // We'll handle clearing branch in a custom onChange
+                      return (
+                        <LookupSelect
+                          key={`bank-${value || 'empty'}`}
+                          lookupKey="bank_code"
+                          value={value}
+                          onChange={(newBankValue) => {
+                            // First update bank_code
+                            onChange(newBankValue);
+                            // Then clear branch_code if bank changed
+                            // Note: We need to clear branch_code in the row data
+                            // The EditableTable will handle this via handleFieldChange
+                            // But we need access to handleFieldChange for branch_code
+                            // Actually, the EditableTable handles this per-field, so we can't
+                            // clear another field from here. We'll rely on the branch editor
+                            // to clear itself when bank_code is null or changed
+                          }}
+                          className="min-h-10 h-auto text-sm"
+                          allowEmpty={true}
+                          emptyLabel="ללא"
+                        />
+                      );
+                    },
+                    render: (value, row, index, isEditing) => value ? (
                       <LookupSelect
                         lookupKey="bank_code"
                         value={value}
-                        onChange={onChange}
+                        onChange={() => {}}
+                        disabled={true}
                         className="min-h-10 h-auto text-sm"
-                        allowEmpty={true}
-                        emptyLabel="ללא"
                       />
-                    ),
-                    render: (value) => value || "N/A",
+                    ) : "N/A",
                   },
                   {
                     id: "branch_code",
                     label: "קוד סניף",
-                    editor: (value, row, onChange) => (
-                      <LookupSelect
-                        lookupKey="branch_code"
-                        value={value}
-                        onChange={onChange}
-                        className="min-h-10 h-auto text-sm"
-                        allowEmpty={true}
-                        emptyLabel="ללא"
-                        filter={row.bank_code ? { bank_code: row.bank_code } : undefined}
-                      />
-                    ),
-                    render: (value) => value || "N/A",
+                    editor: (value, row, onChange) => {
+                      // Get current bank_code from row (which contains editedData values when editing)
+                      const currentBankCode = row.bank_code;
+                      
+                      // The key must include bank_code to force remount when bank changes
+                      // This ensures LookupSelect completely reinitializes with the new filter
+                      // We also need to ensure the filter prop gets a new object reference each time
+                      const filter = currentBankCode ? { bank_id: currentBankCode } : undefined;
+                      
+                      return (
+                        <LookupSelect
+                          key={`branch-${currentBankCode || 'none'}-${row.id || 'new'}`} // Force remount when bank_code changes
+                          lookupKey="branch_code"
+                          value={currentBankCode ? value : null} // Clear branch if no bank selected
+                          onChange={onChange}
+                          className="min-h-10 h-auto text-sm"
+                          allowEmpty={true}
+                          emptyLabel="ללא"
+                          filter={filter}
+                          cache={false} // Disable cache to ensure fresh data when filter changes
+                        />
+                      );
+                    },
+                    render: (value, row, index, isEditing) => {
+                      if (!value) return "N/A";
+                      
+                      // Use LookupSelect in disabled mode to display the description
+                      // Include the filter so it can fetch the correct branch data
+                      return (
+                        <LookupSelect
+                          lookupKey="branch_code"
+                          value={value}
+                          onChange={() => {}}
+                          disabled={true}
+                          className="min-h-10 h-auto text-sm border-0 bg-transparent"
+                          filter={row.bank_code ? { bank_id: row.bank_code } : undefined}
+                          cache={false}
+                        />
+                      );
+                    },
                   },
                   {
                     id: "account_number",
@@ -1116,7 +1114,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                 onSave={async (rows) => {
                   console.log('[EmployeeDetail] Bank details onSave called with rows:', rows);
                   // Track changes for bank details
-                  trackTableChanges('bank_details', employeeDetail?.bank_details || [], rows, (row: any, idx: number) => row.bank_detail_id || row.id || `bank-${idx}`);
+                  trackTableChanges('bank_details', employeeDetail?.bank_details || [], rows, (row: any, idx: number) => row.id || `bank-${idx}`);
                   console.log('[EmployeeDetail] Bank details changes tracked');
                 }}
                 getRowId={(row, index) => row.id || `bank-${index}`}
@@ -1133,21 +1131,6 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
           <TabsContent value="time" className="space-y-4">
             <EditableTable
               columns={[
-                  {
-                    id: "period_id",
-                    label: "תקופה",
-                    editor: (value, row, onChange) => (
-                      <LookupSelect
-                        lookupKey="period_id"
-                        value={value}
-                        onChange={onChange}
-                        className="min-h-10 h-auto text-sm"
-                        allowEmpty={true}
-                        emptyLabel="ללא"
-                      />
-                    ),
-                    render: (value) => value || "N/A",
-                  },
                 {
                   id: "work_days_actual",
                   label: "ימי עבודה בפועל",
@@ -1233,18 +1216,25 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                   render: (value) => value ? `${Number(value).toFixed(2)} ימים` : "N/A",
                 },
               ]}
-              data={employeeDetail?.attendance || []}
-              onAdd={async () => ({
-                id: null,
-                employee_id: employee?.id || employeeDetail?.id || "",
-                period_id: "",
-                work_days_actual: null,
-                work_hours_actual: null,
-                vacation_days_used: null,
-                sick_days_used: null,
-                miluim_days: null,
-                havraa_days_used: null,
-              })}
+              data={filteredAttendance}
+              onAdd={async () => {
+                const currentPeriodId = selectedPeriod?.period_id;
+                if (!currentPeriodId) {
+                  throw new Error('No period selected');
+                }
+                
+                return {
+                  id: null,
+                  employee_id: employee?.id || employeeDetail?.id || "",
+                  period_id: currentPeriodId,
+                  work_days_actual: null,
+                  work_hours_actual: null,
+                  vacation_days_used: null,
+                  sick_days_used: null,
+                  miluim_days: null,
+                  havraa_days_used: null,
+                };
+              }}
               onUpdate={async (row, index) => {
                 // TODO: Implement API call
                 console.log("Updating attendance:", row);
@@ -1255,16 +1245,27 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
               }}
               onSave={async (rows) => {
                 console.log('[EmployeeDetail] Attendance onSave called with rows:', rows);
-                // Track changes for attendance
-                trackTableChanges('attendance', employeeDetail?.attendance || [], rows, (row: any, idx: number) => row.attendance_id || row.id || `attendance-${idx}`);
+                // Track changes for attendance - compare with original filtered data
+                const currentPeriodId = selectedPeriod?.period_id;
+                const originalFiltered = (employeeDetail?.attendance || []).filter((row: any) => row.period_id === currentPeriodId);
+                trackTableChanges('attendance', originalFiltered, rows, (row: any, idx: number) => row.attendance_id || row.id || `attendance-${idx}`);
                 console.log('[EmployeeDetail] Attendance changes tracked');
               }}
-              getRowId={(row, index) => row.period_id || row.id || `attendance-${index}`}
+              getRowId={(row, index) => row.attendance_id || row.id || `attendance-${index}`}
               emptyMessage="אין רשומות נוכחות"
               addButtonLabel="הוסף רשומת נוכחות"
-              canAdd={isEditing}
+              canAdd={(() => {
+                // Allow adding only if no row exists for current period_id
+                if (!isEditing) return false;
+                const currentPeriodId = selectedPeriod?.period_id;
+                if (!currentPeriodId) return false;
+                
+                const allAttendance = employeeDetail?.attendance || [];
+                const existingRow = allAttendance.find((row: any) => row.period_id === currentPeriodId);
+                return !existingRow; // Allow add only if no row exists
+              })()}
               canEdit={isEditing}
-              canDelete={isEditing}
+              canDelete={false} // Disable delete - only one row per period
             />
           </TabsContent>
 
@@ -1314,7 +1315,21 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                     );
                   },
                 },
-                additional_credit_points: { label: 'נקודות זיכוי נוספות', type: 'number', span: 1 },
+                additional_credit_points: { label: 'נקודות זיכוי נוספות', type: 'number', span: 1, render: (value, isEditing, onChange) => {
+                    // Custom render to support DECIMAL(5,2) - allow 2 decimal places
+                    if (!isEditing) {
+                      return <span className="text-sm">{value !== null && value !== undefined ? Number(value).toFixed(2) : 'N/A'}</span>;
+                    }
+                    return (
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={value !== null && value !== undefined ? value : ''}
+                        onChange={(e) => onChange(e.target.value !== '' ? Number(e.target.value) : null)}
+                        className="min-h-10 h-auto text-sm"
+                      />
+                    );
+                  } },
                 special_tax_percent1: { label: 'אחוז מס מיוחד 1', type: 'number', span: 1 },
                 spt1_annual_threshhold: { label: 'סף שנתי מס מיוחד 1', type: 'number', span: 1 },
                 special_tax_percent2: { label: 'אחוז מס מיוחד 2', type: 'number', span: 1 },
@@ -1808,7 +1823,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
               columns={[
                 {
                   id: "item_code",
-                  label: "קוד פריט",
+                  label: "קוד פריט תשלום",
                   editor: (value, row, onChange) => (
                     <LookupSelect
                       lookupKey="item_code"
@@ -1817,21 +1832,28 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       className="min-h-10 h-auto text-sm"
                       allowEmpty={true}
                       emptyLabel="ללא"
+                      preserveLeadingZeros={true}
                     />
                   ),
-                  render: (value) => value || "N/A",
+                  render: (value, row) => {
+                    // Show only the item_code (not the description)
+                    if (!value) return "N/A";
+                    return String(value);
+                  },
                 },
                 {
                   id: "pay_item_name",
-                  label: "שם פריט תשלום",
+                  label: "תיאור",
+                  width: "300px",
                   editor: (value, row, onChange) => (
                     <Input
-                      value={value || ""}
-                      onChange={(e) => onChange(e.target.value)}
+                      value={value ?? ""}
+                      onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
                       className="min-h-10 h-auto text-sm"
+                      style={{ minWidth: '250px' }}
                     />
                   ),
-                  render: (value) => value || "N/A",
+                  render: (value) => value !== null && value !== undefined ? (value || "") : "N/A",
                 },
                 {
                   id: "is_hour_based",
@@ -1854,6 +1876,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       value={value || ""}
                       onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
                       className="min-h-10 h-auto text-sm"
+                      style={{ minWidth: '150px' }}
                     />
                   ),
                   render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "N/A",

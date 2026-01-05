@@ -34,7 +34,7 @@ export const LOOKUP_CONFIGS: Record<string, LookupConfig> = {
     type: 'table',
     tableName: 'cities',
     valueKey: 'city_code',
-    labelKey: 'city_name',
+    labelKey: 'city', // Description column name
     displayFormat: 'code-description',
   },
   employment_status: {
@@ -89,18 +89,31 @@ export const LOOKUP_CONFIGS: Record<string, LookupConfig> = {
     key: 'bank_code',
     type: 'table',
     tableName: 'banks',
-    valueKey: 'bank_code',
-    labelKey: 'bank_name',
+    valueKey: 'bank_id', // Changed from bank_code to bank_id
+    labelKey: 'bank_name', // Please verify if this is the correct description column name
     displayFormat: 'code-description',
   },
   branch_code: {
     key: 'branch_code',
     type: 'table',
-    tableName: 'banks_branches',
-    valueKey: 'branch_code',
+    tableName: 'banks_branches', // Changed from bank_branches to banks_branches
+    valueKey: 'branch_id', // Changed from branch_code to branch_id (matching bank_id pattern)
     labelKey: 'branch_name',
     displayFormat: 'code-description',
-    // Note: This will need to be filtered by bank_code when bank is selected
+    // Note: This will need to be filtered by bank_id when bank is selected
+  },
+  
+  // employees - manager
+  manager_id: {
+    key: 'manager_id',
+    type: 'table',
+    tableName: 'employees',
+    valueKey: 'employee_id',
+    labelKey: "LTRIM(RTRIM(ISNULL(first_name, '') + ' ' + ISNULL(last_name, '')))", // Computed column for full_name (SQL Server concatenation)
+    displayFormat: 'code-description',
+    customLabelFields: ['employee_id', 'first_name', 'last_name'],
+    searchable: true,
+    searchFields: ['employee_id', 'first_name', 'last_name'],
   },
 
   // employees_tax
@@ -125,6 +138,16 @@ export const LOOKUP_CONFIGS: Record<string, LookupConfig> = {
     valueKey: 'item_code',
     labelKey: 'item_name',
     displayFormat: 'code-description',
+  },
+  
+  // countries for employees
+  country: {
+    key: 'country',
+    type: 'table',
+    tableName: 'countries',
+    valueKey: 'country_code', // Assuming the table has country_code as the key
+    labelKey: 'country', // Description column name
+    displayFormat: 'description', // Description only as requested
   },
 };
 

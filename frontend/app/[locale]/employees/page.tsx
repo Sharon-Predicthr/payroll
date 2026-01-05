@@ -17,6 +17,7 @@ import { useDirection } from "@/contexts/DirectionContext";
 import { isAuthenticated } from "@/lib/auth";
 import { CreatePayslipsDialog } from "./components/CreatePayslipsDialog";
 import { AddEmployeeDialog } from "./components/AddEmployeeDialog";
+import { LookupSelect } from "@/components/LookupSelect/LookupSelect";
 
 // Force dynamic rendering
 export const dynamic = 'force-dynamic';
@@ -331,10 +332,11 @@ export default function EmployeesPage() {
   // Filter states
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
-  const [filterDepartment, setFilterDepartment] = useState("all");
-  const [filterStatus, setFilterStatus] = useState("all");
-  const [filterCountry, setFilterCountry] = useState("all");
-  const [filterEmploymentType, setFilterEmploymentType] = useState("all");
+  const [filterDepartment, setFilterDepartment] = useState<string | null>(null);
+  const [filterStatus, setFilterStatus] = useState<string | null>(null);
+  const [filterCountry, setFilterCountry] = useState<string | null>(null);
+  const [filterEmploymentType, setFilterEmploymentType] = useState<string | null>(null);
+  const [filterIsActive, setFilterIsActive] = useState<string>("all"); // "all" | "active" | "inactive"
   
   // Sorting is handled by DataGrid internally (via localStorage)
   
@@ -349,26 +351,30 @@ export default function EmployeesPage() {
 
   // Filter employees (DataGrid will handle sorting internally)
   const filteredEmployees = useMemo(() => {
-    return employees.filter((emp) => {
+    return employees.filter((emp: any) => {
       const matchesSearch =
         emp.name.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
         emp.email.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
         emp.id.toLowerCase().includes(debouncedSearchQuery.toLowerCase());
-      const matchesDepartment = filterDepartment === "all" || emp.department === filterDepartment;
-      const matchesStatus = filterStatus === "all" || emp.status === filterStatus;
-      const matchesCountry = filterCountry === "all" || emp.country === filterCountry;
-      const matchesEmploymentType =
-        filterEmploymentType === "all" || emp.employmentType === filterEmploymentType;
+      const matchesDepartment = !filterDepartment || emp.department === filterDepartment;
+      const matchesStatus = !filterStatus || emp.status === filterStatus;
+      const matchesCountry = !filterCountry || emp.country === filterCountry;
+      const matchesEmploymentType = !filterEmploymentType || emp.employmentType === filterEmploymentType;
+      const matchesIsActive = 
+        filterIsActive === "all" || 
+        (filterIsActive === "active" && emp.is_active === true) ||
+        (filterIsActive === "inactive" && emp.is_active === false);
 
       return (
         matchesSearch &&
         matchesDepartment &&
         matchesStatus &&
         matchesCountry &&
-        matchesEmploymentType
+        matchesEmploymentType &&
+        matchesIsActive
       );
     });
-  }, [employees, debouncedSearchQuery, filterDepartment, filterStatus, filterCountry, filterEmploymentType]);
+  }, [employees, debouncedSearchQuery, filterDepartment, filterStatus, filterCountry, filterEmploymentType, filterIsActive]);
 
   // Track the sorted data from DataGrid
   const [sortedEmployees, setSortedEmployees] = useState<Employee[]>(filteredEmployees);
@@ -445,25 +451,24 @@ export default function EmployeesPage() {
     }
   }, [sortedEmployees, loading, selectedEmployee, userManuallySelected]);
 
-  const departments = Array.from(new Set(employees.map((e) => e.department).filter(Boolean)));
-  const countries = Array.from(new Set(employees.map((e) => e.country).filter(Boolean)));
-
   // Check if any filters are active
   const hasActiveFilters = 
     debouncedSearchQuery !== "" ||
-    filterDepartment !== "all" ||
-    filterStatus !== "all" ||
-    filterCountry !== "all" ||
-    filterEmploymentType !== "all";
+    filterDepartment !== null ||
+    filterStatus !== null ||
+    filterCountry !== null ||
+    filterEmploymentType !== null ||
+    filterIsActive !== "all";
 
   // Clear all filters
   const handleClearFilters = () => {
     setSearchQuery("");
     setDebouncedSearchQuery("");
-    setFilterDepartment("all");
-    setFilterStatus("all");
-    setFilterCountry("all");
-    setFilterEmploymentType("all");
+    setFilterDepartment(null);
+    setFilterStatus(null);
+    setFilterCountry(null);
+    setFilterEmploymentType(null);
+    setFilterIsActive("all");
     // Sorting is handled by DataGrid internally
   };
 
@@ -732,67 +737,67 @@ export default function EmployeesPage() {
               </div>
             </div>
 
-            {/* Clear Filters Button */}
-            {hasActiveFilters && (
-              <Button
-                variant="outline"
-                className="h-9 px-3 text-xs"
-                onClick={handleClearFilters}
-              >
-                <svg className="w-3.5 h-3.5 mr-1.5 rtl:mr-0 rtl:ml-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-{t('clearFilters')}
-              </Button>
-            )}
+            {/* Clear Filters Button - Always visible for easy access */}
+            <Button
+              variant="outline"
+              className="h-9 px-3 text-xs"
+              onClick={handleClearFilters}
+            >
+              <svg className="w-3.5 h-3.5 mr-1.5 rtl:mr-0 rtl:ml-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+              {t('clearFilters')}
+            </Button>
 
             {/* Filters - Compact */}
-            <Select
+            <LookupSelect
+              lookupKey="department_number"
               value={filterDepartment}
-              onChange={(e) => setFilterDepartment(e.target.value)}
-              className="w-[120px] h-9 text-sm"
-            >
-              <option value="all">{t('filters.allDepartments')}</option>
-              {departments.map((dept) => (
-                <option key={dept} value={dept}>
-                  {dept}
-                </option>
-              ))}
-            </Select>
+              onChange={(value) => setFilterDepartment(value as string | null)}
+              placeholder={t('filters.allDepartments')}
+              allowEmpty={true}
+              emptyLabel={t('filters.allDepartments')}
+              className="w-[140px] h-9 text-sm"
+            />
 
-            <Select
+            <LookupSelect
+              lookupKey="employment_status"
               value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
-              className="w-[110px] h-9 text-sm"
-            >
-              <option value="all">{t('filters.allStatus')}</option>
-              <option value="Active">{t('status.active')}</option>
-              <option value="Inactive">{t('status.inactive')}</option>
-              <option value="On Leave">{t('status.onLeave')}</option>
-            </Select>
-
-            <Select
-              value={filterCountry}
-              onChange={(e) => setFilterCountry(e.target.value)}
+              onChange={(value) => setFilterStatus(value as string | null)}
+              placeholder={t('filters.allStatus')}
+              allowEmpty={true}
+              emptyLabel={t('filters.allStatus')}
               className="w-[120px] h-9 text-sm"
-            >
-              <option value="all">{t('filters.allCountries')}</option>
-              {countries.map((country) => (
-                <option key={country} value={country}>
-                  {country}
-                </option>
-              ))}
-            </Select>
+            />
+
+            <LookupSelect
+              lookupKey="country"
+              value={filterCountry}
+              onChange={(value) => setFilterCountry(value as string | null)}
+              placeholder={t('filters.allCountries')}
+              allowEmpty={true}
+              emptyLabel={t('filters.allCountries')}
+              className="w-[120px] h-9 text-sm"
+            />
+
+            <LookupSelect
+              lookupKey="employment_type"
+              value={filterEmploymentType}
+              onChange={(value) => setFilterEmploymentType(value as string | null)}
+              placeholder={t('filters.allTypes')}
+              allowEmpty={true}
+              emptyLabel={t('filters.allTypes')}
+              className="w-[120px] h-9 text-sm"
+            />
 
             <Select
-              value={filterEmploymentType}
-              onChange={(e) => setFilterEmploymentType(e.target.value)}
+              value={filterIsActive}
+              onChange={(e) => setFilterIsActive(e.target.value)}
               className="w-[110px] h-9 text-sm"
             >
-              <option value="all">{t('filters.allTypes')}</option>
-              <option value="Full-time">{t('employmentTypes.fullTime')}</option>
-              <option value="Part-time">{t('employmentTypes.partTime')}</option>
-              <option value="Contract">{t('employmentTypes.contract')}</option>
+              <option value="all">{t('filters.all')}</option>
+              <option value="active">{t('status.active')}</option>
+              <option value="inactive">{t('status.inactive')}</option>
             </Select>
 
             {/* View Toggle */}

@@ -143,11 +143,18 @@ export function LookupGridSelect({
         const lookupData = result.data || result || [];
 
         // Map to LookupGridOption format - include all fields
-        const mappedOptions: LookupGridOption[] = lookupData.map((row: any) => ({
-          value: row[valueKey] ?? row.value ?? row.code,
-          label: row[labelKey] ?? row.label ?? row.description ?? String(row[valueKey] ?? row.value ?? ''),
-          ...row, // Include all fields from the table
-        }));
+        const mappedOptions: LookupGridOption[] = lookupData.map((row: any) => {
+          // Get the computed label (from computed columns like CONCAT)
+          // The backend returns computed columns as 'label' and 'description'
+          const computedLabel = row.label ?? row.description ?? (row[labelKey] ? String(row[labelKey]) : null);
+          
+          return {
+            ...row, // Include all fields from the table first (includes label, description from backend)
+            value: row[valueKey] ?? row.value ?? row.code,
+            // Ensure label is set (from computed column if available, otherwise fallback)
+            label: computedLabel ?? String(row[valueKey] ?? row.value ?? ''),
+          };
+        });
 
         if (!cancelled) {
           setOptions(mappedOptions);

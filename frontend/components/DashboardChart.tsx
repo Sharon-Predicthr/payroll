@@ -58,34 +58,36 @@ export function DashboardChart({
       
       {/* Chart */}
       <div className="relative" style={{ height: `${height}px` }}>
-        <div className="flex items-end justify-between gap-2 h-full">
+        <div className="flex justify-between gap-2 h-full items-end">
           {data.map((point, index) => {
             const barHeight = maxValue > 0 ? (Math.abs(point.value) / maxValue) * 100 : 0;
             const color = point.color || defaultColors[index % defaultColors.length];
             
             return (
-              <div key={index} className="flex-1 flex flex-col items-center gap-2 h-full">
+              <div key={index} className="flex-1 flex flex-col items-center h-full gap-1">
                 {/* Value label on top */}
-                <div className="text-xs font-medium text-text-main text-center">
-                  {formatValue(point.value)}
+                <div className="text-xs font-medium text-text-main text-center mb-1">
+                  {formatValue(point.value, index)}
                 </div>
                 
-                {/* Bar */}
-                <div 
-                  className={`w-full ${color} rounded-t-lg transition-all hover:opacity-80 relative group`}
-                  style={{ height: `${barHeight}%`, minHeight: barHeight > 0 ? '4px' : '0' }}
-                  title={`${point.label}: ${formatValue(point.value, index)}`}
-                >
-                  {/* Hover tooltip */}
-                  <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                    <div className="bg-gray-900 text-white text-xs rounded py-1 px-2 whitespace-nowrap">
-                      {point.label}: {formatValue(point.value)}
+                {/* Bar container - grows from bottom */}
+                <div className="w-full flex items-end flex-grow" style={{ minHeight: '100px' }}>
+                  <div 
+                    className={`w-full ${color} rounded-t-lg transition-all hover:opacity-80 relative group`}
+                    style={{ height: `${barHeight}%`, minHeight: barHeight > 0 ? '4px' : '0' }}
+                    title={`${point.label}: ${formatValue(point.value, index)}`}
+                  >
+                    {/* Hover tooltip */}
+                    <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                      <div className="bg-gray-900 text-white text-xs rounded py-1 px-2 whitespace-nowrap">
+                        {point.label}: {formatValue(point.value, index)}
+                      </div>
                     </div>
                   </div>
                 </div>
                 
                 {/* Label */}
-                <div className="text-xs text-text-muted text-center leading-tight px-1">
+                <div className="text-xs text-text-muted text-center leading-tight px-1 mt-1">
                   {point.label}
                 </div>
               </div>

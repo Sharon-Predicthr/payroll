@@ -101,6 +101,7 @@
       "documents": "מסמכים והיסטוריה"
     },
     "filters": {
+      "all": "כל העובדים",
       "allDepartments": "כל המחלקות",
       "allStatus": "כל הסטטוסים",
       "allCountries": "כל המדינות",

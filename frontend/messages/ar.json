@@ -98,6 +98,7 @@
       "documents": "المستندات والسجل"
     },
     "filters": {
+      "all": "جميع الموظفين",
       "allDepartments": "جميع الأقسام",
       "allStatus": "جميع الحالات",
       "allCountries": "جميع البلدان",

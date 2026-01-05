@@ -484,12 +484,9 @@ export class EmployeesService extends BaseTenantService {
       return result.recordset.map((row: any) => {
         const mapped: any = { ...row }; // Keep all original columns
         
-        // Use item_name from xlg_pay_items if available, otherwise use existing pay_item_name
-        if (hasPayItemsTable && row.pay_item_name_from_lookup) {
-          mapped.pay_item_name = row.pay_item_name_from_lookup;
-        } else if (!mapped.pay_item_name && row.pay_item_name_from_lookup) {
-          mapped.pay_item_name = row.pay_item_name_from_lookup;
-        }
+        // Keep pay_item_name from employees_pay_items table (user's custom description)
+        // Do NOT override it with item_name from xlg_pay_items
+        // item_name from xlg_pay_items is only for reference in item_code column display
         
         // Map to expected field names
         Object.keys(row).forEach(key => {
@@ -1214,16 +1211,44 @@ export class EmployeesService extends BaseTenantService {
       'first_name', 'last_name', 'email', 'cell_phone_number',
       'tz_id', 'national_id', 'department_number', 'job_title',
       'employment_status', 'hire_date', 'is_active', 'site_number',
-      'employment_percent', 'position', 'status',
+      'employment_percent', 'position', 'status', 'city_code', 'zip_code',
+      'address_line1', 'address_line2', 'date_of_birth', 'gender', 'manager_id',
     ];
+
+    // Map frontend field names to database field names
+    const fieldMapping: Record<string, string> = {
+      'status': 'employment_status', // Frontend uses 'status', database uses 'employment_status'
+    };
 
     const updateFields: string[] = [];
     request.input('employeeId', sql.NVarChar, employeeId);
+    
+    // Always add updated_at if the column exists in the table
+    // Check if updated_at column exists (use a separate request to avoid transaction conflicts)
+    try {
+      const checkRequest = new sql.Request(transaction);
+      const columnCheck = await checkRequest.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_NAME = 'employees' AND COLUMN_NAME = 'updated_at'
+      `);
+      
+      if (columnCheck.recordset.length > 0) {
+        updateFields.push('updated_at = GETDATE()');
+        operationLog.push(`[updateEmployeeInTransaction] Added updated_at = GETDATE()`);
+      }
+    } catch (checkError) {
+      // If check fails, just skip adding updated_at
+      operationLog.push(`[updateEmployeeInTransaction] Could not check for updated_at column, skipping`);
+    }
 
     Object.keys(updateData).forEach((key) => {
+      // Map frontend field name to database field name if needed
+      const dbFieldName = fieldMapping[key] || key;
+      
       if (allowedFields.includes(key) && updateData[key] !== undefined) {
-        const paramName = key.replace(/_/g, '');
-        updateFields.push(`${key} = @${paramName}`);
+        const paramName = dbFieldName.replace(/_/g, '');
+        updateFields.push(`${dbFieldName} = @${paramName}`);
         
         const value = updateData[key];
         if (value === null) {
@@ -1293,7 +1318,12 @@ export class EmployeesService extends BaseTenantService {
           } else if (typeof value === 'boolean') {
             updateRequest.input(paramName, sql.Bit, Boolean(value));
           } else if (typeof value === 'number') {
-            updateRequest.input(paramName, sql.Int, Number(value));
+            // additional_credit_points is DECIMAL(5,2)
+            if (key === 'additional_credit_points') {
+              updateRequest.input(paramName, sql.Decimal(5, 2), Number(value));
+            } else {
+              updateRequest.input(paramName, sql.Int, Number(value));
+            }
           } else {
             updateRequest.input(paramName, sql.NVarChar, String(value));
           }
@@ -1324,7 +1354,12 @@ export class EmployeesService extends BaseTenantService {
           } else if (typeof value === 'boolean') {
             insertRequest.input(paramName, sql.Bit, Boolean(value));
           } else if (typeof value === 'number') {
-            insertRequest.input(paramName, sql.Int, Number(value));
+            // additional_credit_points is DECIMAL(5,2)
+            if (key === 'additional_credit_points') {
+              insertRequest.input(paramName, sql.Decimal(5, 2), Number(value));
+            } else {
+              insertRequest.input(paramName, sql.Int, Number(value));
+            }
           } else {
             insertRequest.input(paramName, sql.NVarChar, String(value));
           }
@@ -1374,82 +1409,212 @@ export class EmployeesService extends BaseTenantService {
     const dataTypeMap = new Map<string, string>();
     columns.forEach((col, idx) => dataTypeMap.set(col, dataTypes[idx]));
     
-    // Check if primary key is IDENTITY
-    const isPrimaryKeyIdentity = isIdentityMap.get(primaryKeyColumn) || false;
+    // Check if primary key column exists in the table (case-insensitive)
+    const primaryKeyExists = columns.some(col => col.toLowerCase() === primaryKeyColumn.toLowerCase());
+    
+    // Check if primary key is IDENTITY (only if it exists)
+    const isPrimaryKeyIdentity = primaryKeyExists ? (isIdentityMap.get(primaryKeyColumn) || false) : false;
     
     this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Table columns: ${JSON.stringify(columns)}`);
-    this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Primary key column: ${primaryKeyColumn}, has 'id' column: ${columns.includes('id')}`);
+    this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Primary key column: ${primaryKeyColumn}, exists in table: ${primaryKeyExists}, has 'id' column: ${columns.includes('id')}`);
     this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Primary key '${primaryKeyColumn}' is IDENTITY: ${isPrimaryKeyIdentity}`);
     
     // Get the data type of the primary key column to determine if it's string or number
-    const primaryKeyDataType = dataTypeMap.get(primaryKeyColumn);
+    const primaryKeyDataType = primaryKeyExists ? dataTypeMap.get(primaryKeyColumn) : null;
+    
+    // If primary key doesn't exist, we need to handle this table differently
+    // For employees_bank_details, we might need to use a composite key (employee_id + bank_code)
+    if (!primaryKeyExists) {
+      this.logger.warn(`[saveDetailTableInTransaction ${tableName}] Primary key column '${primaryKeyColumn}' does not exist in table. This table may use a composite key or different key structure.`);
+    }
 
     // DELETE first
     if (changes.deleted && changes.deleted.length > 0) {
       for (const id of changes.deleted) {
         const deleteRequest = new sql.Request(transaction);
         deleteRequest.input('employeeId', sql.NVarChar, employeeId);
-        // Support both string and number IDs based on column data type
-        const isPrimaryKeyNumeric = primaryKeyDataType && (
-          primaryKeyDataType === 'int' || 
-          primaryKeyDataType === 'bigint' || 
-          primaryKeyDataType === 'smallint' ||
-          primaryKeyDataType === 'tinyint'
-        );
-        if (isPrimaryKeyNumeric && (typeof id === 'number' || !isNaN(Number(id)))) {
-          deleteRequest.input('recordId', sql.Int, Number(id));
+        
+        if (!primaryKeyExists) {
+          // For tables without a primary key column (like employees_bank_details),
+          // we need to find the record by matching bank_code from the original data
+          // Since we only have the id, we need to find the record in the original set
+          // For now, use a simpler approach: delete by employee_id only if no PK exists
+          // This is not ideal but works for bank_details which typically has one row per employee
+          // For tables without PK, try to use bank_code if available in the original data
+          // For now, delete all rows for this employee (should be improved to track bank_code)
+          await deleteRequest.query(
+            `DELETE FROM ${tableName} WHERE employee_id = @employeeId`
+          );
         } else {
-          deleteRequest.input('recordId', sql.NVarChar, String(id));
+          // Support both string and number IDs based on column data type
+          const isPrimaryKeyNumeric = primaryKeyDataType && (
+            primaryKeyDataType === 'int' || 
+            primaryKeyDataType === 'bigint' || 
+            primaryKeyDataType === 'smallint' ||
+            primaryKeyDataType === 'tinyint'
+          );
+          if (isPrimaryKeyNumeric && (typeof id === 'number' || !isNaN(Number(id)))) {
+            deleteRequest.input('recordId', sql.Int, Number(id));
+          } else {
+            deleteRequest.input('recordId', sql.NVarChar, String(id));
+          }
+          await deleteRequest.query(
+            `DELETE FROM ${tableName} WHERE employee_id = @employeeId AND ${primaryKeyColumn} = @recordId`
+          );
         }
-        await deleteRequest.query(
-          `DELETE FROM ${tableName} WHERE employee_id = @employeeId AND ${primaryKeyColumn} = @recordId`
-        );
       }
       operationLog.push(`[saveDetailTableInTransaction ${tableName}] Deleted ${changes.deleted.length} record(s)`);
     }
 
     // UPDATE
     if (changes.updated && changes.updated.length > 0) {
+      // For employees_bank_details, convert UPDATE to INSERT to use MERGE (UPSERT)
+      if (tableName === 'employees_bank_details' && !primaryKeyExists) {
+        // Move all updates to created array - they'll be handled by MERGE in INSERT section
+        if (!changes.created) changes.created = [];
+        changes.created.push(...changes.updated);
+        changes.updated = []; // Clear updates since they're now in created
+        this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Converted ${changes.created.length} UPDATE(s) to MERGE via INSERT section`);
+      }
+      
       for (const record of changes.updated) {
-        // Filter out 'id' from record if it doesn't match primary key column
+        // Map 'id' to primary key column if they differ
         const recordToUse = { ...record };
-        if (recordToUse.hasOwnProperty('id') && primaryKeyColumn !== 'id') {
+        if (recordToUse.hasOwnProperty('id') && primaryKeyColumn !== 'id' && primaryKeyExists) {
+          // If 'id' exists but primary key has different name, map it
+          if (!recordToUse[primaryKeyColumn]) {
+            recordToUse[primaryKeyColumn] = recordToUse.id;
+          }
+          delete recordToUse.id;
+        } else if (recordToUse.hasOwnProperty('id') && !primaryKeyExists) {
+          // For tables without PK, just remove the id field
           delete recordToUse.id;
         }
-        const recordId = recordToUse[primaryKeyColumn] || recordToUse[`${tableName.split('_').pop()}_id`];
-        if (!recordId) {
-          throw new Error(`Cannot update ${tableName}: missing primary key`);
+        
+        // For tables without a primary key column, use bank_code to identify the row
+        let whereClause = '';
+        let recordId: string | number | null = null; // Declare at wider scope for logging
+        if (!primaryKeyExists && tableName === 'employees_bank_details') {
+          // Use employee_id + bank_code as composite key
+          if (!recordToUse.bank_code) {
+            throw new Error(`Cannot update ${tableName}: missing bank_code for composite key`);
+          }
+          whereClause = `employee_id = @employeeId AND bank_code = @bankCode`;
+          recordId = recordToUse.bank_code; // Use bank_code as identifier for logging
+        } else if (!primaryKeyExists && tableName === 'employees_attendance') {
+          // Use client_id + employee_id + period_id as composite key
+          if (!recordToUse.period_id) {
+            throw new Error(`Cannot update ${tableName}: missing period_id for composite key`);
+          }
+          // Get client_id from employee if not in record
+          let clientId = recordToUse.client_id;
+          if (!clientId) {
+            const clientIdRequest = new sql.Request(transaction);
+            clientIdRequest.input('employeeId', sql.NVarChar, employeeId);
+            const clientIdResult = await clientIdRequest.query(`
+              SELECT client_id FROM employees WHERE employee_id = @employeeId
+            `);
+            if (clientIdResult.recordset.length > 0) {
+              clientId = clientIdResult.recordset[0].client_id;
+            }
+          }
+          if (!clientId) {
+            throw new Error(`Cannot update ${tableName}: missing client_id for composite key`);
+          }
+          whereClause = `client_id = @clientId AND employee_id = @employeeId AND period_id = @periodId`;
+          recordId = recordToUse.period_id; // Use period_id as identifier for logging
+        } else {
+          recordId = recordToUse[primaryKeyColumn] || recordToUse[`${tableName.split('_').pop()}_id`];
+          if (!recordId) {
+            throw new Error(`Cannot update ${tableName}: missing primary key`);
+          }
+          whereClause = `employee_id = @employeeId AND ${primaryKeyColumn} = @recordId`;
         }
 
         const updateFields: string[] = [];
         const updateRequest = new sql.Request(transaction);
         updateRequest.input('employeeId', sql.NVarChar, employeeId);
-        // Support both string and number IDs based on column data type
-        const isPrimaryKeyNumeric = primaryKeyDataType && (
-          primaryKeyDataType === 'int' || 
-          primaryKeyDataType === 'bigint' || 
-          primaryKeyDataType === 'smallint' ||
-          primaryKeyDataType === 'tinyint'
-        );
-        if (isPrimaryKeyNumeric && (typeof recordId === 'number' || !isNaN(Number(recordId)))) {
-          updateRequest.input('recordId', sql.Int, Number(recordId));
+        
+        // Set up WHERE clause parameters based on whether PK exists
+        if (!primaryKeyExists && tableName === 'employees_bank_details') {
+          // Use bank_code for composite key
+          updateRequest.input('bankCode', sql.NVarChar, recordToUse.bank_code);
+        } else if (!primaryKeyExists && tableName === 'employees_attendance') {
+          // Use client_id, employee_id, period_id for composite key
+          let clientId = recordToUse.client_id;
+          if (!clientId) {
+            const clientIdRequest = new sql.Request(transaction);
+            clientIdRequest.input('employeeId', sql.NVarChar, employeeId);
+            const clientIdResult = await clientIdRequest.query(`
+              SELECT client_id FROM employees WHERE employee_id = @employeeId
+            `);
+            if (clientIdResult.recordset.length > 0) {
+              clientId = clientIdResult.recordset[0].client_id;
+            }
+          }
+          if (!clientId) {
+            throw new Error(`Cannot update ${tableName}: missing client_id for composite key`);
+          }
+          updateRequest.input('clientId', sql.NVarChar, clientId);
+          updateRequest.input('periodId', sql.NVarChar, recordToUse.period_id);
         } else {
-          updateRequest.input('recordId', sql.NVarChar, String(recordId));
+          // Support both string and number IDs based on column data type
+          const isPrimaryKeyNumeric = primaryKeyDataType && (
+            primaryKeyDataType === 'int' || 
+            primaryKeyDataType === 'bigint' || 
+            primaryKeyDataType === 'smallint' ||
+            primaryKeyDataType === 'tinyint'
+          );
+          // recordId already set above
+          if (isPrimaryKeyNumeric && (typeof recordId === 'number' || !isNaN(Number(recordId)))) {
+            updateRequest.input('recordId', sql.Int, Number(recordId));
+          } else {
+            updateRequest.input('recordId', sql.NVarChar, String(recordId));
+          }
         }
 
-        // Filter out 'id' from record if it doesn't match primary key column
+        // Map 'id' to primary key column if they differ, then filter it out
         const recordToUseForUpdate = { ...record };
         if (recordToUseForUpdate.hasOwnProperty('id') && primaryKeyColumn !== 'id') {
+          // If 'id' exists but primary key has different name, map it
+          if (!recordToUseForUpdate[primaryKeyColumn] && primaryKeyExists) {
+            recordToUseForUpdate[primaryKeyColumn] = recordToUseForUpdate.id;
+          }
           delete recordToUseForUpdate.id;
+        }
+        // Also remove primary key column from update record (it should not be updated)
+        if (primaryKeyExists && recordToUseForUpdate.hasOwnProperty(primaryKeyColumn)) {
+          delete recordToUseForUpdate[primaryKeyColumn];
         }
         
         columns.forEach((column) => {
-          if (column === 'employee_id' || column === primaryKeyColumn || column === 'client_id') {
+          const columnLower = column.toLowerCase();
+          if (columnLower === 'employee_id' || columnLower === 'client_id') {
             return; // Skip these fields
           }
           
+          // Skip primary key column if it exists (case-insensitive comparison)
+          if (primaryKeyExists && columnLower === primaryKeyColumn.toLowerCase()) {
+            return;
+          }
+          
           // Skip 'id' column if it exists in table but primary key has different name
-          if (column === 'id' && primaryKeyColumn !== 'id') {
+          if (columnLower === 'id' && primaryKeyColumn.toLowerCase() !== 'id' && primaryKeyExists) {
+            return;
+          }
+          
+          // Skip 'id' column if primary key doesn't exist (table has no PK column)
+          if (columnLower === 'id' && !primaryKeyExists) {
+            return;
+          }
+          
+          // For bank_details without PK, skip bank_code from UPDATE SET (it's used in WHERE)
+          if (!primaryKeyExists && tableName === 'employees_bank_details' && columnLower === 'bank_code') {
+            return;
+          }
+          
+          // For attendance without PK, skip period_id and client_id from UPDATE SET (they're used in WHERE)
+          if (!primaryKeyExists && tableName === 'employees_attendance' && (columnLower === 'period_id' || columnLower === 'client_id')) {
             return;
           }
 
@@ -1464,7 +1629,12 @@ export class EmployeesService extends BaseTenantService {
             } else if (dataType === 'bit' || dataType === 'tinyint') {
               updateRequest.input(column.replace(/_/g, ''), sql.Bit, Boolean(value));
             } else if (dataType === 'int' || dataType === 'smallint') {
-              updateRequest.input(column.replace(/_/g, ''), sql.Int, Number(value));
+              // item_code should always be saved as string to preserve leading zeros
+              if (tableName === 'employees_pay_items' && column.toLowerCase() === 'item_code') {
+                updateRequest.input(column.replace(/_/g, ''), sql.NVarChar, String(value));
+              } else {
+                updateRequest.input(column.replace(/_/g, ''), sql.Int, Number(value));
+              }
             } else if (dataType === 'decimal' || dataType === 'numeric' || dataType === 'float' || dataType === 'real') {
               updateRequest.input(column.replace(/_/g, ''), sql.Decimal(18, 2), Number(value));
             } else if (dataType === 'date' || dataType === 'datetime' || dataType === 'datetime2') {
@@ -1479,10 +1649,14 @@ export class EmployeesService extends BaseTenantService {
           const updateQuery = `
             UPDATE ${tableName}
             SET ${updateFields.join(', ')}
-            WHERE employee_id = @employeeId AND ${primaryKeyColumn} = @recordId
+            WHERE ${whereClause}
           `;
           this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Executing UPDATE query: ${updateQuery.substring(0, 200)}...`);
-          this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Record ID: ${recordId}, Type: ${typeof recordId}, Primary key type: ${primaryKeyDataType}`);
+          if (primaryKeyExists) {
+            this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Record ID: ${recordId}, Type: ${typeof recordId}, Primary key type: ${primaryKeyDataType}`);
+          } else {
+            this.logger.debug(`[saveDetailTableInTransaction ${tableName}] No primary key - using composite key (employee_id + bank_code), Record identifier: ${recordId}`);
+          }
           try {
             await updateRequest.query(updateQuery);
             this.logger.debug(`[saveDetailTableInTransaction ${tableName}] UPDATE successful for record ${recordId}`);
@@ -1527,9 +1701,9 @@ export class EmployeesService extends BaseTenantService {
         // Filter out 'id' from record FIRST if it doesn't match primary key column
         // Frontend sends 'id: null' but table uses 'pay_item_id' or other name
         const recordToUse = { ...record };
-        if (recordToUse.hasOwnProperty('id') && primaryKeyColumn !== 'id') {
+        if (recordToUse.hasOwnProperty('id') && (!primaryKeyExists || primaryKeyColumn !== 'id')) {
           delete recordToUse.id;
-          this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Removed 'id' field from record (primary key is '${primaryKeyColumn}')`);
+          this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Removed 'id' field from record (primary key exists: ${primaryKeyExists}, column: '${primaryKeyColumn}')`);
         }
         this.logger.debug(`[saveDetailTableInTransaction ${tableName}] RecordToUse keys: ${JSON.stringify(Object.keys(recordToUse))}`);
         
@@ -1538,8 +1712,8 @@ export class EmployeesService extends BaseTenantService {
         const insertRequest = new sql.Request(transaction);
         insertRequest.input('employeeId', sql.NVarChar, employeeId);
         
-        // If primary key is not IDENTITY, we need to generate it manually
-        if (!isPrimaryKeyIdentity && primaryKeyColumn) {
+        // If primary key exists and is not IDENTITY, we need to generate it manually
+        if (primaryKeyExists && !isPrimaryKeyIdentity && primaryKeyColumn) {
           // Get the next value for the primary key
           const maxIdRequest = new sql.Request(transaction);
           maxIdRequest.input('employeeId', sql.NVarChar, employeeId);
@@ -1567,12 +1741,23 @@ export class EmployeesService extends BaseTenantService {
         }
         
         columns.forEach((column) => {
-          if (column === 'employee_id' || column === primaryKeyColumn || column === 'client_id') {
-            return; // Skip employee_id (already added) and primary key (auto-increment)
+          const columnLower = column.toLowerCase();
+          if (columnLower === 'employee_id' || columnLower === 'client_id') {
+            return; // Skip employee_id (already added) and client_id (added separately)
+          }
+          
+          // Skip primary key column if it exists (case-insensitive comparison)
+          if (primaryKeyExists && columnLower === primaryKeyColumn.toLowerCase()) {
+            return; // Skip primary key (handled above if not IDENTITY)
           }
           
           // Skip 'id' column if it exists in table but primary key has different name
-          if (column === 'id' && primaryKeyColumn !== 'id') {
+          if (columnLower === 'id' && primaryKeyExists && primaryKeyColumn.toLowerCase() !== 'id') {
+            return;
+          }
+          
+          // Skip 'id' column if primary key doesn't exist (table has no PK column)
+          if (columnLower === 'id' && !primaryKeyExists) {
             return;
           }
 
@@ -1593,8 +1778,8 @@ export class EmployeesService extends BaseTenantService {
           // Skip if column doesn't exist in record and it's not a required field
           // This prevents trying to use 'id' from frontend when table doesn't have 'id' column
           // Also skip if column is 'id' and it's not the primary key (should have been caught above, but double-check)
-          if (column === 'id' && primaryKeyColumn !== 'id') {
-            this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Skipping 'id' column (primary key is '${primaryKeyColumn}')`);
+          if (columnLower === 'id' && (!primaryKeyExists || primaryKeyColumn.toLowerCase() !== 'id')) {
+            this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Skipping 'id' column (primary key exists: ${primaryKeyExists}, column: '${primaryKeyColumn}')`);
             return;
           }
           
@@ -1624,7 +1809,12 @@ export class EmployeesService extends BaseTenantService {
             } else if (dataType === 'bit' || dataType === 'tinyint') {
               insertRequest.input(column.replace(/_/g, ''), sql.Bit, Boolean(value));
             } else if (isIntField) {
-              insertRequest.input(column.replace(/_/g, ''), sql.Int, Number(value));
+              // item_code should always be saved as string to preserve leading zeros
+              if (tableName === 'employees_pay_items' && column.toLowerCase() === 'item_code') {
+                insertRequest.input(column.replace(/_/g, ''), sql.NVarChar, String(value));
+              } else {
+                insertRequest.input(column.replace(/_/g, ''), sql.Int, Number(value));
+              }
             } else if (isDecimalField) {
               // For decimal fields, handle null values - if column doesn't allow nulls, use 0
               const decimalValue = value === null || value === undefined ? 0 : Number(value);
@@ -1638,14 +1828,93 @@ export class EmployeesService extends BaseTenantService {
         });
 
         if (insertFields.length > 1) {
-          const insertQuery = `
-            INSERT INTO ${tableName} (${insertFields.join(', ')})
-            VALUES (${insertValues.join(', ')})
-          `;
-          this.logger.debug(`[saveDetailTableInTransaction ${tableName}] INSERT query: ${insertQuery}`);
-          this.logger.debug(`[saveDetailTableInTransaction ${tableName}] INSERT fields: ${JSON.stringify(insertFields)}`);
-          this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Record keys: ${JSON.stringify(Object.keys(recordToUse))}`);
-          await insertRequest.query(insertQuery);
+          // For employees_attendance, DELETE existing then INSERT (simple UPSERT)
+          if (tableName === 'employees_attendance' && recordToUse.period_id) {
+            if (!hasClientIdColumn || !clientId) {
+              throw new Error(`Cannot save ${tableName}: client_id is required`);
+            }
+            
+            const periodIdValue = String(recordToUse.period_id).trim();
+            if (!periodIdValue) {
+              throw new Error(`Cannot save ${tableName}: period_id is required`);
+            }
+            
+            this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Before DELETE - client_id: "${clientId}", employee_id: "${employeeId}", period_id: "${periodIdValue}"`);
+            
+            // DELETE existing record by PRIMARY KEY (client_id, employee_id, period_id)
+            const deleteRequest = new sql.Request(transaction);
+            deleteRequest.input('clientId', sql.NVarChar, String(clientId).trim());
+            deleteRequest.input('employeeId', sql.NVarChar, String(employeeId).trim());
+            deleteRequest.input('periodId', sql.NVarChar, periodIdValue);
+            const deleteResult = await deleteRequest.query(`
+              DELETE FROM ${tableName} 
+              WHERE LTRIM(RTRIM(client_id)) = LTRIM(RTRIM(@clientId)) 
+                AND LTRIM(RTRIM(employee_id)) = LTRIM(RTRIM(@employeeId)) 
+                AND LTRIM(RTRIM(period_id)) = LTRIM(RTRIM(@periodId))
+            `);
+            this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Deleted ${deleteResult.rowsAffected[0]} existing record(s) - PK: (${clientId}, ${employeeId}, ${periodIdValue})`);
+            
+            // Now INSERT - ensure period_id is in insertFields
+            if (!insertFields.includes('period_id')) {
+              insertFields.push('period_id');
+              insertValues.push('@periodid');
+              insertRequest.input('periodid', sql.NVarChar, periodIdValue);
+            }
+            
+            const insertQuery = `
+              INSERT INTO ${tableName} (${insertFields.join(', ')})
+              VALUES (${insertValues.join(', ')})
+            `;
+            await insertRequest.query(insertQuery);
+            this.logger.debug(`[saveDetailTableInTransaction ${tableName}] DELETED and INSERTED record`);
+          } else if (tableName === 'employees_bank_details' && recordToUse.bank_code) {
+            if (!hasClientIdColumn || !clientId) {
+              throw new Error(`Cannot save ${tableName}: client_id is required`);
+            }
+            
+            const bankCodeValue = String(recordToUse.bank_code).trim();
+            if (!bankCodeValue) {
+              throw new Error(`Cannot save ${tableName}: bank_code is required`);
+            }
+            
+            this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Before DELETE - client_id: "${clientId}", employee_id: "${employeeId}", bank_code: "${bankCodeValue}"`);
+            
+            // DELETE existing record by PRIMARY KEY (client_id, employee_id, bank_code)
+            const deleteRequest = new sql.Request(transaction);
+            deleteRequest.input('clientId', sql.NVarChar, String(clientId).trim());
+            deleteRequest.input('employeeId', sql.NVarChar, String(employeeId).trim());
+            deleteRequest.input('bankCode', sql.NVarChar, bankCodeValue);
+            const deleteResult = await deleteRequest.query(`
+              DELETE FROM ${tableName} 
+              WHERE LTRIM(RTRIM(client_id)) = LTRIM(RTRIM(@clientId)) 
+                AND LTRIM(RTRIM(employee_id)) = LTRIM(RTRIM(@employeeId)) 
+                AND LTRIM(RTRIM(bank_code)) = LTRIM(RTRIM(@bankCode))
+            `);
+            this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Deleted ${deleteResult.rowsAffected[0]} existing record(s) - PK: (${clientId}, ${employeeId}, ${bankCodeValue})`);
+            
+            // Now INSERT - ensure bank_code is in insertFields
+            if (!insertFields.includes('bank_code')) {
+              insertFields.push('bank_code');
+              insertValues.push('@bankcode');
+            }
+            
+            const insertQuery = `
+              INSERT INTO ${tableName} (${insertFields.join(', ')})
+              VALUES (${insertValues.join(', ')})
+            `;
+            await insertRequest.query(insertQuery);
+            this.logger.debug(`[saveDetailTableInTransaction ${tableName}] DELETED and INSERTED record`);
+          } else {
+            // Regular INSERT for tables with single-column PK or no PK conflicts
+            const insertQuery = `
+              INSERT INTO ${tableName} (${insertFields.join(', ')})
+              VALUES (${insertValues.join(', ')})
+            `;
+            this.logger.debug(`[saveDetailTableInTransaction ${tableName}] INSERT query: ${insertQuery}`);
+            this.logger.debug(`[saveDetailTableInTransaction ${tableName}] INSERT fields: ${JSON.stringify(insertFields)}`);
+            this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Record keys: ${JSON.stringify(Object.keys(recordToUse))}`);
+            await insertRequest.query(insertQuery);
+          }
         }
       }
       operationLog.push(`[saveDetailTableInTransaction ${tableName}] Created ${changes.created.length} record(s)`);
@@ -1680,11 +1949,13 @@ export class EmployeesService extends BaseTenantService {
     changes: { created?: any[]; updated?: any[]; deleted?: (number | string)[] },
     operationLog: string[],
   ): Promise<void> {
+    // employees_attendance uses composite primary key (client_id, employee_id, period_id)
+    // Pass empty string to indicate no single-column primary key exists
     await this.saveDetailTableInTransaction(
       transaction,
       employeeId,
       'employees_attendance',
-      'attendance_id',
+      '', // No single-column PK - uses composite key (client_id, employee_id, period_id)
       changes,
       operationLog,
     );
@@ -1699,11 +1970,15 @@ export class EmployeesService extends BaseTenantService {
     changes: { created?: any[]; updated?: any[]; deleted?: (number | string)[] },
     operationLog: string[],
   ): Promise<void> {
+    // employees_bank_details table doesn't have a primary key column
+    // It uses a composite key: employee_id + bank_code
+    // Pass 'id' as the primary key column name, but the code will detect it doesn't exist
+    // and handle it using the composite key approach
     await this.saveDetailTableInTransaction(
       transaction,
       employeeId,
       'employees_bank_details',
-      'bank_detail_id',
+      'id', // This column doesn't exist - will be handled by composite key logic
       changes,
       operationLog,
     );
