@@ -1,0 +1,3 @@
+﻿SP_DEFINITION
+-------------
+---------------------------------------------------------------------- Stored Procedure: dbo.sp_add_employee-- Updated:--   hire_date validation now uses dbo.xlg_pay_periods (current open period)---- Current pay period definition used here:--   - period wh

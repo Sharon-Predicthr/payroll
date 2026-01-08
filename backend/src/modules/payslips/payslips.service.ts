@@ -179,14 +179,15 @@ export class PayslipsService extends BaseTenantService {
         periodId = payslipId;
       }
 
-      let whereClause = 'period_id = @periodId AND client_id = @clientId';
+      // Use LTRIM/RTRIM for string comparison to handle whitespace issues
+      let whereClause = 'LTRIM(RTRIM(period_id)) = LTRIM(RTRIM(@periodId)) AND LTRIM(RTRIM(client_id)) = LTRIM(RTRIM(@clientId))';
       const request = pool.request()
-        .input('periodId', sql.NVarChar, periodId)
-        .input('clientId', sql.NVarChar, tenantCode);
+        .input('periodId', sql.NVarChar, periodId.trim())
+        .input('clientId', sql.NVarChar, tenantCode.trim());
       
       if (employeeId) {
-        whereClause += ' AND employee_id = @employeeId';
-        request.input('employeeId', sql.NVarChar, employeeId);
+        whereClause += ' AND LTRIM(RTRIM(employee_id)) = LTRIM(RTRIM(@employeeId))';
+        request.input('employeeId', sql.NVarChar, employeeId.trim());
       }
 
       const selectQuery = `SELECT ${selectFields.join(', ')} FROM clc_payslips WHERE ${whereClause}`;
@@ -417,6 +418,7 @@ export class PayslipsService extends BaseTenantService {
     tenantCode: string,
     userId: string,
     userRole: string,
+    periodId?: string,
   ): Promise<any | null> {
     // Security check: EMPLOYEE can only view their own payslips
     if (userRole === 'EMPLOYEE' && employeeId !== userId) {
@@ -457,15 +459,24 @@ export class PayslipsService extends BaseTenantService {
       ];
       
       // Get the latest payslip for this employee
-      const whereClause = availableColumns.includes('client_id')
-        ? 'employee_id = @employeeId AND client_id = @clientId'
-        : 'employee_id = @employeeId';
+      // If periodId is provided, filter by it as well
+      let whereClause = availableColumns.includes('client_id')
+        ? 'LTRIM(RTRIM(employee_id)) = LTRIM(RTRIM(@employeeId)) AND LTRIM(RTRIM(client_id)) = LTRIM(RTRIM(@clientId))'
+        : 'LTRIM(RTRIM(employee_id)) = LTRIM(RTRIM(@employeeId))';
+      
+      if (periodId) {
+        whereClause += ' AND LTRIM(RTRIM(period_id)) = LTRIM(RTRIM(@periodId))';
+      }
 
       const request = pool.request()
-        .input('employeeId', sql.NVarChar, employeeId);
+        .input('employeeId', sql.NVarChar, employeeId.trim());
       
       if (availableColumns.includes('client_id')) {
-        request.input('clientId', sql.NVarChar, tenantCode);
+        request.input('clientId', sql.NVarChar, tenantCode.trim());
+      }
+      
+      if (periodId) {
+        request.input('periodId', sql.NVarChar, periodId.trim());
       }
 
       const result = await request.query(`
@@ -2157,19 +2168,29 @@ export class PayslipsService extends BaseTenantService {
       const empCols = empColsResult.recordset.map((r: any) => r.COLUMN_NAME);
       const hasIsActive = empCols.includes('is_active');
       const hasClientId = empCols.includes('client_id');
+      const hasEmploymentStatus = empCols.includes('employment_status');
 
       // Build WHERE clause dynamically
       let whereClause = '';
       if (hasClientId) {
-        whereClause = `WHERE client_id = '${tenantCode}'`;
+        whereClause = `WHERE LTRIM(RTRIM(client_id)) = LTRIM(RTRIM('${tenantCode}'))`;
         if (hasIsActive) {
           whereClause += ` AND is_active = 1`;
         }
       } else if (hasIsActive) {
         whereClause = `WHERE is_active = 1`;
       }
+      
+      // Filter out CONTRACTOR employees - only process EMPLOYEE status
+      if (hasEmploymentStatus) {
+        if (whereClause) {
+          whereClause += ` AND LTRIM(RTRIM(employment_status)) != 'CONTRACTOR'`;
+        } else {
+          whereClause = `WHERE LTRIM(RTRIM(employment_status)) != 'CONTRACTOR'`;
+        }
+      }
 
-      // Get all active employees
+      // Get all active employees (excluding CONTRACTOR)
       const employeesResult = await pool
         .request()
         .query(`
@@ -2179,8 +2200,50 @@ export class PayslipsService extends BaseTenantService {
         `);
       employeeIds = employeesResult.recordset.map((row: any) => row.employee_id);
     } else if (dto.employee_ids && dto.employee_ids.length > 0) {
-      employeeIds = dto.employee_ids;
+      // Filter out CONTRACTOR employees from the provided list
+      // We need to check employment_status for each employee
+      const filteredEmployeeIds: string[] = [];
+      for (const empId of dto.employee_ids) {
+        const empStatusResult = await pool
+          .request()
+          .input('employeeId', sql.NVarChar, empId.trim())
+          .query(`
+            SELECT employment_status
+            FROM employees
+            WHERE LTRIM(RTRIM(employee_id)) = LTRIM(RTRIM(@employeeId))
+          `);
+        
+        if (empStatusResult.recordset.length > 0) {
+          const employmentStatus = (empStatusResult.recordset[0].employment_status || '').trim().toUpperCase();
+          if (employmentStatus !== 'CONTRACTOR') {
+            filteredEmployeeIds.push(empId);
+          } else {
+            this.logger.log(`[processPayroll] Skipping CONTRACTOR employee: ${empId}`);
+          }
+        } else {
+          // If status not found, include the employee (backward compatibility)
+          filteredEmployeeIds.push(empId);
+        }
+      }
+      employeeIds = filteredEmployeeIds;
     } else if (dto.employee_id) {
+      // Check if single employee is CONTRACTOR
+      const empStatusResult = await pool
+        .request()
+        .input('employeeId', sql.NVarChar, dto.employee_id.trim())
+        .query(`
+          SELECT employment_status
+          FROM employees
+          WHERE LTRIM(RTRIM(employee_id)) = LTRIM(RTRIM(@employeeId))
+        `);
+      
+      if (empStatusResult.recordset.length > 0) {
+        const employmentStatus = (empStatusResult.recordset[0].employment_status || '').trim().toUpperCase();
+        if (employmentStatus === 'CONTRACTOR') {
+          throw new Error('Cannot process payroll for CONTRACTOR employee. Only EMPLOYEE status can be processed.');
+        }
+      }
+      
       employeeIds = [dto.employee_id];
     } else {
       throw new Error('Either employee_id, employee_ids, or process_all must be provided');
@@ -2208,15 +2271,15 @@ export class PayslipsService extends BaseTenantService {
         // Use + for SQL Server string concatenation
         const payslipResult = await pool
           .request()
-          .input('clientId', sql.NVarChar, tenantCode)
-          .input('employeeId', sql.NVarChar, employeeId)
-          .input('periodId', sql.NVarChar, dto.period_id)
+          .input('clientId', sql.NVarChar, tenantCode.trim())
+          .input('employeeId', sql.NVarChar, employeeId.trim())
+          .input('periodId', sql.NVarChar, dto.period_id.trim())
           .query(`
             SELECT TOP 1 period_id + '-' + employee_id as payslip_id
             FROM clc_payslips
-            WHERE client_id = @clientId 
-              AND employee_id = @employeeId 
-              AND period_id = @periodId
+            WHERE LTRIM(RTRIM(client_id)) = LTRIM(RTRIM(@clientId)) 
+              AND LTRIM(RTRIM(employee_id)) = LTRIM(RTRIM(@employeeId)) 
+              AND LTRIM(RTRIM(period_id)) = LTRIM(RTRIM(@periodId))
             ORDER BY period_id DESC, employee_id DESC
           `);
         

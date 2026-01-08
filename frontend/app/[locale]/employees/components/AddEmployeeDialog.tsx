@@ -171,18 +171,32 @@ export function AddEmployeeDialog({
       let data: any;
       try {
         const text = await response.text();
-        if (!text) {
-          throw new Error("Empty response from server");
-        }
-        data = JSON.parse(text);
+      console.log('[AddEmployeeDialog] Response status:', response.status);
+      console.log('[AddEmployeeDialog] Response text:', text);
+      if (!text) {
+        throw new Error("Empty response from server");
+      }
+      data = JSON.parse(text);
+      console.log('[AddEmployeeDialog] Parsed data:', JSON.stringify(data, null, 2));
+      
+      // Log all error details if present
+      if (data.status_code || data.message || data.error || data.status_message) {
+        console.error('[AddEmployeeDialog] Error details:', {
+          status_code: data.status_code,
+          status_message: data.status_message,
+          message: data.message,
+          error: data.error,
+        });
+      }
       } catch (parseError: any) {
-        console.error("Error parsing response:", parseError);
+        console.error("[AddEmployeeDialog] Error parsing response:", parseError);
         setError("שגיאה בקבלת תשובה מהשרת. אנא נסה שוב.");
         setLoading(false);
         return;
       }
 
       if (!response.ok) {
+        console.error('[AddEmployeeDialog] Response not OK:', response.status, data);
         // Handle SP error codes
         if (data.status_code !== undefined) {
           const errorMessages: Record<number, string> = {
@@ -197,14 +211,32 @@ export function AddEmployeeDialog({
             99: "שגיאה בלתי צפויה",
           };
           
-          const errorMessage = errorMessages[data.status_code] || data.status_message || "שגיאה בהוספת עובד";
-          setError(`${errorMessage} (קוד שגיאה: ${data.status_code})`);
+          const message = errorMessages[data.status_code] || data.status_message || data.message || "שגיאה בהוספת עובד";
+          const errorMessage = data.status_code === 99 
+            ? `${message} (קוד שגיאה: ${data.status_code}). ${data.message ? `פרטים: ${data.message}` : 'אנא בדוק את לוגי השרת.'}`
+            : `${message} (קוד שגיאה: ${data.status_code})`;
+          setError(errorMessage);
+        } else if (data.status_message) {
+          setError(data.status_message);
         } else if (data.message) {
+          console.error('[AddEmployeeDialog] Error message:', data.message);
           setError(data.message);
         } else if (data.error) {
-          setError(data.error);
+          console.error('[AddEmployeeDialog] Error field:', data.error);
+          // Handle both string and object errors
+          if (typeof data.error === 'string') {
+            setError(data.error);
+          } else if (data.error.message) {
+            setError(data.error.message);
+          } else {
+            setError(JSON.stringify(data.error));
+          }
+        } else if (data.status_message) {
+          console.error('[AddEmployeeDialog] Status message:', data.status_message);
+          setError(data.status_message);
         } else {
-          setError("שגיאה בהוספת עובד");
+          console.error('[AddEmployeeDialog] Unknown error format:', data);
+          setError(`שגיאה בהוספת עובד (קוד HTTP: ${response.status}). אנא נסה שוב או פנה לתמיכה.`);
         }
         setLoading(false);
         return;
@@ -229,7 +261,7 @@ export function AddEmployeeDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-6xl max-h-[95vh] overflow-y-auto p-5">
+      <DialogContent className="w-[95vw] max-w-[95vw] max-h-[95vh] overflow-y-auto p-6">
         <DialogHeader>
           <DialogTitle>הוסף עובד חדש</DialogTitle>
         </DialogHeader>
@@ -381,7 +413,7 @@ export function AddEmployeeDialog({
               שדות אופציונליים
             </h3>
             
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-4 gap-4">
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">
                   אחוז העסקה
@@ -425,11 +457,13 @@ export function AddEmployeeDialog({
                 <label className="block text-xs font-medium text-gray-700 mb-1">
                   קוד עיר
                 </label>
-                <Input
-                  type="number"
+                <LookupSelect
+                  lookupKey="city_code"
                   value={cityCode}
-                  onChange={(e) => setCityCode(e.target.value ? Number(e.target.value) : "")}
+                  onChange={(value) => setCityCode(value ? Number(value) : "")}
+                  placeholder="בחר עיר"
                   className="w-full"
+                  allowEmpty={true}
                 />
               </div>
 
@@ -457,7 +491,7 @@ export function AddEmployeeDialog({
                 />
               </div>
 
-              <div>
+              <div className="col-span-2">
                 <label className="block text-xs font-medium text-gray-700 mb-1">
                   אימייל
                 </label>
@@ -466,10 +500,12 @@ export function AddEmployeeDialog({
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full"
+                  maxLength={50}
+                  placeholder="example@company.com"
                 />
               </div>
 
-              <div>
+              <div className="col-span-2">
                 <label className="block text-xs font-medium text-gray-700 mb-1">
                   תפקיד
                 </label>
@@ -485,11 +521,13 @@ export function AddEmployeeDialog({
                 <label className="block text-xs font-medium text-gray-700 mb-1">
                   מספר אתר
                 </label>
-                <Input
-                  type="number"
+                <LookupSelect
+                  lookupKey="site_number"
                   value={siteNumber}
-                  onChange={(e) => setSiteNumber(e.target.value ? Number(e.target.value) : "")}
+                  onChange={(value) => setSiteNumber(value ? Number(value) : "")}
+                  placeholder="בחר אתר"
                   className="w-full"
+                  allowEmpty={true}
                 />
               </div>
 
@@ -497,11 +535,13 @@ export function AddEmployeeDialog({
                 <label className="block text-xs font-medium text-gray-700 mb-1">
                   מזהה מנהל
                 </label>
-                <Input
-                  type="text"
+                <LookupSelect
+                  lookupKey="manager_id"
                   value={managerId}
-                  onChange={(e) => setManagerId(e.target.value)}
+                  onChange={(value) => setManagerId(value ? String(value) : "")}
+                  placeholder="בחר מנהל"
                   className="w-full"
+                  allowEmpty={true}
                 />
               </div>
 

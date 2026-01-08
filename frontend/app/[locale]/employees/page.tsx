@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { useLocale } from 'next-intl';
 import { useTranslations } from 'next-intl';
 import { PageShell } from "@/components/PageShell";
@@ -15,9 +15,10 @@ import { Select } from "@/components/ui/select";
 import { Toast } from "@/components/ui/toast";
 import { useDirection } from "@/contexts/DirectionContext";
 import { isAuthenticated } from "@/lib/auth";
-import { CreatePayslipsDialog } from "./components/CreatePayslipsDialog";
 import { AddEmployeeDialog } from "./components/AddEmployeeDialog";
 import { LookupSelect } from "@/components/LookupSelect/LookupSelect";
+import { usePayrollPeriod } from "@/contexts/PayrollPeriodContext";
+import { getAuthHeader } from "@/lib/auth";
 
 // Force dynamic rendering
 export const dynamic = 'force-dynamic';
@@ -66,6 +67,7 @@ function mapBackendToFrontend(backend: BackendEmployee): Employee {
 
 export default function EmployeesPage() {
   const router = useRouter();
+  const pathname = usePathname();
   const locale = useLocale();
   const { direction } = useDirection();
   const t = useTranslations('employees');
@@ -82,9 +84,11 @@ export default function EmployeesPage() {
   const [isResizing, setIsResizing] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<Set<string>>(new Set());
-  const [showCreatePayslipsDialog, setShowCreatePayslipsDialog] = useState(false);
   const [showAddEmployeeDialog, setShowAddEmployeeDialog] = useState(false);
   const [userManuallySelected, setUserManuallySelected] = useState(false); // Track if user manually selected an employee
+  const prevPathnameRef = useRef<string | null>(null);
+  const [processingPayslips, setProcessingPayslips] = useState(false);
+  const { selectedPeriod } = usePayrollPeriod();
   
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -92,61 +96,7 @@ export default function EmployeesPage() {
   const [totalEmployees, setTotalEmployees] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
 
-  // Fetch employees on mount and when pagination changes
-  useEffect(() => {
-    const token = localStorage.getItem('paylens_access_token');
-    console.log('[Frontend] useEffect - Token check:', !!token);
-    
-    if (!isAuthenticated() || !token) {
-      console.log('[Frontend] Not authenticated, redirecting to login');
-      router.push(`/${locale}/login`);
-      return;
-    }
-
-    console.log('[Frontend] Authenticated, fetching employees');
-    fetchEmployees();
-  }, [router, currentPage, pageSize]);
-
-  // Fetch employee detail when selected
-  useEffect(() => {
-    if (selectedEmployee) {
-      console.log('[Frontend] Employee selected, fetching detail for:', selectedEmployee.id, selectedEmployee.name);
-      fetchEmployeeDetail(selectedEmployee.id);
-    } else {
-      console.log('[Frontend] No employee selected, clearing detail');
-      setSelectedEmployeeDetail(null);
-      setLoadingDetail(false);
-    }
-  }, [selectedEmployee]);
-
-  // Update selectedEmployee name when selectedEmployeeDetail changes (after save)
-  useEffect(() => {
-    if (selectedEmployeeDetail && selectedEmployee && selectedEmployeeDetail.id === selectedEmployee.id) {
-      const updatedName = selectedEmployeeDetail.full_name || 
-        `${selectedEmployeeDetail.first_name || ''} ${selectedEmployeeDetail.last_name || ''}`.trim();
-      if (updatedName && updatedName !== selectedEmployee.name) {
-        console.log('[EmployeesPage] useEffect - Updating selectedEmployee name from detail:', updatedName, 'old name:', selectedEmployee.name);
-        setSelectedEmployee(prev => {
-          if (!prev || prev.id !== selectedEmployeeDetail.id) return prev;
-          console.log('[EmployeesPage] useEffect - Setting new name:', updatedName);
-          return { ...prev, name: updatedName };
-        });
-        
-        // Also update the employee in the list if it exists there
-        setEmployees(prev => {
-          const employeeIndex = prev.findIndex(emp => emp.id === selectedEmployeeDetail.id);
-          if (employeeIndex >= 0) {
-            const updatedList = [...prev];
-            updatedList[employeeIndex] = { ...updatedList[employeeIndex], name: updatedName };
-            return updatedList;
-          }
-          return prev;
-        });
-      }
-    }
-  }, [selectedEmployeeDetail, selectedEmployee]);
-
-
+  // Fetch employees function - defined before useEffects to avoid dependency issues
   const fetchEmployees = async (): Promise<Employee[]> => {
     try {
       setLoading(true);
@@ -164,13 +114,17 @@ export default function EmployeesPage() {
         return;
       }
       
-      const url = `/api/employees?page=${currentPage}&limit=${pageSize}`;
+      // Add timestamp to prevent caching
+      const url = `/api/employees?page=${currentPage}&limit=${pageSize}&_t=${Date.now()}`;
       console.log('[EmployeesPage] Making request to:', url);
       
       const response = await fetch(url, {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0',
         },
         cache: 'no-store', // Force fresh fetch
         next: { revalidate: 0 }, // Disable cache
@@ -228,8 +182,11 @@ export default function EmployeesPage() {
       console.log('[EmployeesPage] Mapped employees:', mappedEmployees.length);
       console.log('[EmployeesPage] Mapped employees list:', mappedEmployees.map(e => ({ id: e.id, name: e.name })));
       
-      // Use functional update to get current selectedEmployee
+      // Always use server data directly - build names from DB
+      // This ensures we always show the latest data from the database
       setEmployees(mappedEmployees);
+      
+      // Use functional update to get current selectedEmployee
       setSelectedEmployee(prevSelected => {
         if (!prevSelected) return prevSelected;
         const updatedEmployee = mappedEmployees.find(emp => emp.id === prevSelected.id);
@@ -243,27 +200,15 @@ export default function EmployeesPage() {
       
       // Update pagination info
       if (paginationData) {
-        const total = paginationData.total || 0;
-        const totalPages = paginationData.totalPages || 1;
-        setTotalEmployees(total);
-        setTotalPages(totalPages);
-        console.log('[EmployeesPage] Pagination info:', { total, totalPages, currentPage, pageSize });
-        
-        // If current page is beyond total pages, reset to last page
-        if (currentPage > totalPages && totalPages > 0) {
-          console.log('[EmployeesPage] Current page exceeds total pages, resetting to last page');
-          setCurrentPage(totalPages);
-        }
+        setTotalEmployees(paginationData.total || employeesData.length);
+        setTotalPages(paginationData.totalPages || Math.ceil(employeesData.length / pageSize));
       } else {
-        // If no pagination info, assume all data is loaded
-        setTotalEmployees(mappedEmployees.length);
-        setTotalPages(1);
+        // Fallback: assume we have all data if no pagination info
+        setTotalEmployees(employeesData.length);
+        setTotalPages(Math.ceil(employeesData.length / pageSize));
       }
       
-      
-      console.log('[EmployeesPage] ✅ Fetch completed successfully');
-      
-      // Return mapped employees for use in onSuccess callbacks
+      console.log('[EmployeesPage] ✅ Successfully fetched employees');
       return mappedEmployees;
     } catch (err: any) {
       console.error('[EmployeesPage] ❌ Error fetching employees:', err);
@@ -275,6 +220,100 @@ export default function EmployeesPage() {
       setLoading(false);
     }
   };
+
+  // Fetch employees on mount, when pagination changes, and ALWAYS when entering the page
+  // This ensures fresh data from DB every time we enter the employees page
+  useEffect(() => {
+    const token = localStorage.getItem('paylens_access_token');
+    console.log('[Frontend] useEffect - Token check:', !!token, 'pathname:', pathname);
+    
+    if (!isAuthenticated() || !token) {
+      console.log('[Frontend] Not authenticated, redirecting to login');
+      router.push(`/${locale}/login`);
+      return;
+    }
+
+    // ALWAYS refresh from DB when this effect runs (mount or pathname change)
+    console.log('[Frontend] Refreshing employees list directly from DB');
+    fetchEmployees();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router, currentPage, pageSize, pathname]);
+
+  // Refresh employees when page becomes visible (user returns to tab/window)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        // Page became visible - refresh employees from DB
+        console.log('[Frontend] Page became visible, refreshing employees from DB');
+        const token = localStorage.getItem('paylens_access_token');
+        if (token && isAuthenticated()) {
+          fetchEmployees();
+        }
+      }
+    };
+
+    const handleFocus = () => {
+      // Window gained focus - refresh employees from DB
+      console.log('[Frontend] Window gained focus, refreshing employees from DB');
+      const token = localStorage.getItem('paylens_access_token');
+      if (token && isAuthenticated()) {
+        fetchEmployees();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router]);
+
+  // Fetch employee detail when selected
+  useEffect(() => {
+    if (selectedEmployee) {
+      console.log('[Frontend] Employee selected, fetching detail for:', selectedEmployee.id, selectedEmployee.name);
+      fetchEmployeeDetail(selectedEmployee.id);
+    } else {
+      console.log('[Frontend] No employee selected, clearing detail');
+      setSelectedEmployeeDetail(null);
+      setLoadingDetail(false);
+    }
+  }, [selectedEmployee]);
+
+  // Update selectedEmployee name and employees list when selectedEmployeeDetail changes (after save or fetch)
+  useEffect(() => {
+    if (selectedEmployeeDetail && selectedEmployee && selectedEmployeeDetail.id === selectedEmployee.id) {
+      const updatedName = selectedEmployeeDetail.full_name || 
+        `${selectedEmployeeDetail.first_name || ''} ${selectedEmployeeDetail.last_name || ''}`.trim();
+      if (updatedName && updatedName !== selectedEmployee.name) {
+        console.log('[EmployeesPage] useEffect - Updating selectedEmployee name from detail:', updatedName, 'old name:', selectedEmployee.name);
+        setSelectedEmployee(prev => {
+          if (!prev || prev.id !== selectedEmployeeDetail.id) return prev;
+          console.log('[EmployeesPage] useEffect - Setting new name:', updatedName);
+          return { ...prev, name: updatedName };
+        });
+        
+        // Also update the employee in the list if it exists there - use functional update to ensure it's applied
+        setEmployees(prev => {
+          const employeeIndex = prev.findIndex(emp => emp.id === selectedEmployeeDetail.id);
+          if (employeeIndex >= 0) {
+            const currentEmp = prev[employeeIndex];
+            // Only update if the name is actually different (avoid unnecessary re-renders)
+            if (currentEmp.name !== updatedName) {
+              const updatedList = [...prev];
+              updatedList[employeeIndex] = { ...updatedList[employeeIndex], name: updatedName };
+              console.log('[EmployeesPage] useEffect - Updated employee in list at index:', employeeIndex, 'new name:', updatedName);
+              return updatedList;
+            }
+          }
+          return prev;
+        });
+      }
+    }
+  }, [selectedEmployeeDetail, selectedEmployee]);
 
   const fetchEmployeeDetail = async (employeeId: string) => {
     if (!employeeId) {
@@ -509,6 +548,20 @@ export default function EmployeesPage() {
                 if (!prev || prev.id !== savedEmployeeId) return prev;
                 return { ...prev, name: updatedName };
               });
+              
+              // IMPORTANT: Update employees list IMMEDIATELY (synchronously) before fetchEmployees
+              // This ensures the name is updated in the list right away, regardless of pagination
+              setEmployees(prev => {
+                const employeeIndex = prev.findIndex(emp => emp.id === savedEmployeeId);
+                if (employeeIndex >= 0) {
+                  const updatedList = [...prev];
+                  updatedList[employeeIndex] = { ...updatedList[employeeIndex], name: updatedName };
+                  console.log('[EmployeesPage] handleSave - Updated employee in list at index:', employeeIndex, 'new name:', updatedName);
+                  return updatedList;
+                }
+                console.log('[EmployeesPage] handleSave - Employee not found in current list, will be updated by fetchEmployees');
+                return prev;
+              });
             }
           }
         }
@@ -517,7 +570,7 @@ export default function EmployeesPage() {
       }
     }
     
-    // Then refresh the employees list to update names in sidebar
+    // Then refresh the employees list to update names in sidebar (in case employee is on a different page)
     await fetchEmployees();
     
     setToastMessage(t('savedSuccess'));
@@ -677,13 +730,81 @@ export default function EmployeesPage() {
             {(selectedEmployeeIds.size > 0 || employees.length > 0) && (
               <Button
                 variant="outline"
-                onClick={() => setShowCreatePayslipsDialog(true)}
+                onClick={async () => {
+                  if (!selectedPeriod) {
+                    alert("אנא בחר תקופת שכר");
+                    return;
+                  }
+                  
+                  if (processingPayslips) {
+                    return;
+                  }
+                  
+                  try {
+                    setProcessingPayslips(true);
+                    
+                    const authHeader = getAuthHeader();
+                    if (!authHeader) {
+                      alert("לא מאומת");
+                      setProcessingPayslips(false);
+                      return;
+                    }
+                    
+                    const response = await fetch("/api/payslips/process", {
+                      method: "POST",
+                      headers: {
+                        Authorization: authHeader,
+                        "Content-Type": "application/json",
+                      },
+                      body: JSON.stringify({
+                        period_id: selectedPeriod.period_id,
+                        process_all: true,
+                      }),
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (!response.ok) {
+                      throw new Error(data.message || "Failed to process payroll");
+                    }
+                    
+                    if (data.success && data.data) {
+                      const result = data.data;
+                      if (result.processed > 0) {
+                        // Navigate to payslips page to see the created payslips
+                        router.push(`/${locale}/payslips`);
+                      } else {
+                        alert("לא עובדו תלושי שכר");
+                        setProcessingPayslips(false);
+                      }
+                    } else {
+                      throw new Error("Unexpected response format");
+                    }
+                  } catch (err: any) {
+                    console.error("Error processing payroll:", err);
+                    alert(`❌ שגיאה: ${err.message || "Unknown error"}`);
+                    setProcessingPayslips(false);
+                  }
+                }}
+                disabled={processingPayslips || !selectedPeriod}
                 className="flex items-center gap-2"
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                צור תלושי שכר
+                {processingPayslips ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    מעבד שכר...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    צור תלושי שכר
+                  </>
+                )}
               </Button>
             )}
             <Button
@@ -1029,18 +1150,6 @@ export default function EmployeesPage() {
             )}
           </div>
         </div>
-
-        {/* Create Payslips Dialog */}
-        <CreatePayslipsDialog
-          open={showCreatePayslipsDialog}
-          onOpenChange={setShowCreatePayslipsDialog}
-          selectedEmployees={employees.filter(emp => selectedEmployeeIds.has(emp.id))}
-          allEmployees={employees}
-          onSuccess={() => {
-            setShowCreatePayslipsDialog(false);
-            setSelectedEmployeeIds(new Set());
-          }}
-        />
 
         {/* Add Employee Dialog */}
         <AddEmployeeDialog

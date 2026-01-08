@@ -16,7 +16,14 @@ export async function GET(
     }
 
     const employeeId = params.employeeId;
-    const response = await fetch(`${BACKEND_URL}/payslips/latest/${employeeId}`, {
+    const { searchParams } = new URL(request.url);
+    const periodId = searchParams.get('period_id');
+    
+    const url = periodId 
+      ? `${BACKEND_URL}/payslips/latest/${employeeId}?period_id=${encodeURIComponent(periodId)}`
+      : `${BACKEND_URL}/payslips/latest/${employeeId}`;
+    
+    const response = await fetch(url, {
       method: 'GET',
       headers: {
         'Authorization': authHeader,

@@ -40,6 +40,7 @@ interface EmployeeDetailData {
   department_id?: string;
   position?: string;
   status?: string;
+  employment_status?: string; // Added to match backend field
   hire_date?: Date;
   bank_details?: any[];
   pay_items?: any[];
@@ -48,6 +49,8 @@ interface EmployeeDetailData {
   attendance?: any[];
   contracts?: any[];
   leave_balances?: any[];
+  // Include all other fields from backend
+  [key: string]: any;
 }
 
 interface EmployeeDetailProps {
@@ -398,7 +401,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
   }
 
   // Component will render even if employeeDetail is null/undefined
-  // All fields use optional chaining (employeeDetail?.field || "N/A")
+  // All fields use optional chaining (employeeDetail?.field || "")
   
   return (
     <div className="bg-card-bg rounded-xl shadow-sm border border-gray-200 h-full overflow-y-auto">
@@ -469,12 +472,15 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                   <Button 
                     variant="outline" 
                     className="h-8 px-2.5 text-xs"
-                    disabled={loadingPayslip}
+                    disabled={loadingPayslip || !selectedPeriod || (employeeDetail?.employment_status?.toUpperCase() === 'CONTRACTOR')}
                     onClick={async (e) => {
                       e.preventDefault();
                       e.stopPropagation();
                       
-                      if (!employee || loadingPayslip) {
+                      if (!employee || loadingPayslip || !selectedPeriod) {
+                        if (!selectedPeriod) {
+                          alert("אנא בחר תקופת שכר");
+                        }
                         return;
                       }
                       
@@ -487,37 +493,78 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                           return;
                         }
 
-                        // First, get the latest payslip ID
-                        const payslipResponse = await fetch(`/api/payslips/latest/${employee.id}`, {
+                        // First, process payroll for this employee (calculate payslip)
+                        const processResponse = await fetch("/api/payslips/process", {
+                          method: "POST",
                           headers: {
                             Authorization: `Bearer ${token}`,
+                            "Content-Type": "application/json",
                           },
+                          body: JSON.stringify({
+                            period_id: selectedPeriod.period_id,
+                            employee_id: employee.id,
+                          }),
                         });
 
-                        const payslipData = await payslipResponse.json();
+                        const processData = await processResponse.json();
 
-                        if (!payslipResponse.ok || !payslipData.success || !payslipData.data) {
-                          alert("לא נמצא תלוש שכר עבור עובד זה");
-                          setLoadingPayslip(false);
-                          return;
+                        if (!processResponse.ok || !processData.success) {
+                          throw new Error(processData.message || "Failed to process payroll");
                         }
 
-                        // Extract payslip ID
-                        const payslipId = payslipData.data?.payslip?.id || 
-                                         payslipData.data?.id || 
-                                         (payslipData.data?.payslip && typeof payslipData.data.payslip === 'string' ? payslipData.data.payslip : null);
-
+                        // After processing, get the payslip ID
+                        // The API returns payslip_id in the response
+                        let payslipId = null;
+                        
+                        // Check the response data structure
+                        console.log('[EmployeeDetail] Process response:', processData);
+                        
+                        if (processData.data?.payslip_id) {
+                          // Single payslip ID
+                          payslipId = processData.data.payslip_id;
+                        } else if (processData.data?.payslip_ids && processData.data.payslip_ids.length > 0) {
+                          // Multiple payslip IDs - use the first one
+                          payslipId = processData.data.payslip_ids[0];
+                        }
+                        
+                        // If still no ID, wait a moment and then try to get the latest payslip for this employee and period
                         if (!payslipId) {
-                          alert("לא נמצא תלוש שכר עבור עובד זה");
-                          setLoadingPayslip(false);
-                          return;
+                          // Wait a short moment for the database to be updated
+                          await new Promise(resolve => setTimeout(resolve, 500));
+                          
+                          // Try to get the latest payslip for this employee
+                          const payslipResponse = await fetch(`/api/payslips/latest/${employee.id}?period_id=${selectedPeriod.period_id}`, {
+                            headers: {
+                              Authorization: `Bearer ${token}`,
+                            },
+                          });
+
+                          const payslipData = await payslipResponse.json();
+                          console.log('[EmployeeDetail] Latest payslip response:', payslipData);
+
+                          if (payslipResponse.ok && payslipData.success && payslipData.data) {
+                            // The payslip data structure might have id in different places
+                            const payslip = payslipData.data?.payslip || payslipData.data;
+                            payslipId = payslip?.id || payslipData.data?.id;
+                            
+                            // If still no ID, construct it from period_id and employee_id
+                            if (!payslipId && payslip?.period_id && payslip?.employee_id) {
+                              payslipId = `${payslip.period_id}-${payslip.employee_id}`;
+                            }
+                          }
                         }
 
+                        // If still no ID, construct it from period_id and employee_id as fallback
+                        if (!payslipId) {
+                          payslipId = `${selectedPeriod.period_id}-${employee.id}`;
+                        }
+
+                        console.log('[EmployeeDetail] Opening payslip with ID:', payslipId);
                         // Open payslip in a new tab
                         window.open(`/${locale}/payslip/${payslipId}`, '_blank');
                       } catch (err: any) {
-                        console.error("Error downloading payslip:", err);
-                        alert(`❌ שגיאה בהורדת תלוש שכר: ${err.message || "Unknown error"}`);
+                        console.error("Error processing/displaying payslip:", err);
+                        alert(`❌ שגיאה בעיבוד/הצגת תלוש שכר: ${err.message || "Unknown error"}`);
                       } finally {
                         setLoadingPayslip(false);
                       }
@@ -529,7 +576,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                         </svg>
-                        טוען...
+                        מעבד...
                       </>
                     ) : (
                       <>
@@ -829,7 +876,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                     render: (value) => {
                       const config = require("@/lib/lookups").LOOKUP_CONFIGS["employment_type"];
                       const option = config?.options?.find((opt: any) => opt.value === value);
-                      return option ? option.label : value || "N/A";
+                      return option ? option.label : value || "";
                     },
                   },
                   {
@@ -844,7 +891,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                         className="min-h-10 h-auto text-sm"
                       />
                     ),
-                    render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "N/A",
+                    render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "",
                   },
                   {
                     id: "standard_hours_per_month",
@@ -858,7 +905,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                         className="min-h-10 h-auto text-sm"
                       />
                     ),
-                    render: (value) => value ? `${Number(value).toFixed(2)} שעות` : "N/A",
+                    render: (value) => value ? `${Number(value).toFixed(2)} שעות` : "",
                   },
                   {
                     id: "hourly_rate",
@@ -872,7 +919,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                         className="min-h-10 h-auto text-sm"
                       />
                     ),
-                    render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "N/A",
+                    render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "",
                   },
                   {
                     id: "job_percent",
@@ -886,7 +933,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                         className="min-h-10 h-auto text-sm"
                       />
                     ),
-                    render: (value) => value !== null && value !== undefined ? `${Number(value).toFixed(2)}%` : "N/A",
+                    render: (value) => value !== null && value !== undefined ? `${Number(value).toFixed(2)}%` : "",
                   },
                   {
                     id: "annual_vacation_days",
@@ -900,7 +947,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                         className="min-h-10 h-auto text-sm"
                       />
                     ),
-                    render: (value) => value ? `${Number(value).toFixed(2)} ימים` : "N/A",
+                    render: (value) => value ? `${Number(value).toFixed(2)} ימים` : "",
                   },
                   {
                     id: "annual_sick_days",
@@ -914,7 +961,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                         className="min-h-10 h-auto text-sm"
                       />
                     ),
-                    render: (value) => value ? `${Number(value).toFixed(2)} ימים` : "N/A",
+                    render: (value) => value ? `${Number(value).toFixed(2)} ימים` : "",
                   },
                   {
                     id: "annual_havraa_days",
@@ -928,7 +975,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                         className="min-h-10 h-auto text-sm"
                       />
                     ),
-                    render: (value) => value ? `${Number(value).toFixed(2)} ימים` : "N/A",
+                    render: (value) => value ? `${Number(value).toFixed(2)} ימים` : "",
                   },
                   {
                     id: "comment",
@@ -940,7 +987,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                         className="min-h-10 h-auto text-sm"
                       />
                     ),
-                    render: (value) => value || "N/A",
+                    render: (value) => value || "",
                   },
                 ]}
                 data={employeeDetail?.contracts || []}
@@ -1023,7 +1070,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                         disabled={true}
                         className="min-h-10 h-auto text-sm"
                       />
-                    ) : "N/A",
+                    ) : "",
                   },
                   {
                     id: "branch_code",
@@ -1052,7 +1099,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       );
                     },
                     render: (value, row, index, isEditing) => {
-                      if (!value) return "N/A";
+                      if (!value) return "";
                       
                       // Use LookupSelect in disabled mode to display the description
                       // Include the filter so it can fetch the correct branch data
@@ -1079,7 +1126,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                         className="min-h-10 h-auto text-sm"
                       />
                     ),
-                    render: (value) => value || "N/A",
+                    render: (value) => value || "",
                   },
                   {
                     id: "account_name",
@@ -1091,7 +1138,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                         className="min-h-10 h-auto text-sm"
                       />
                     ),
-                    render: (value) => value || "N/A",
+                    render: (value) => value || "",
                   },
                 ]}
                 data={employeeDetail?.bank_details || []}
@@ -1143,7 +1190,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       className="min-h-10 h-auto text-sm"
                     />
                   ),
-                  render: (value) => value ? `${Number(value).toFixed(2)} ימים` : "N/A",
+                  render: (value) => value !== null && value !== undefined ? `${Number(value).toFixed(2)} ימים` : "",
                 },
                 {
                   id: "work_hours_actual",
@@ -1157,7 +1204,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       className="min-h-10 h-auto text-sm"
                     />
                   ),
-                  render: (value) => value ? `${Number(value).toFixed(2)} שעות` : "N/A",
+                  render: (value) => value !== null && value !== undefined ? `${Number(value).toFixed(2)} שעות` : "",
                 },
                 {
                   id: "vacation_days_used",
@@ -1171,7 +1218,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       className="min-h-10 h-auto text-sm"
                     />
                   ),
-                  render: (value) => value ? `${Number(value).toFixed(2)} ימים` : "N/A",
+                  render: (value) => value !== null && value !== undefined ? `${Number(value).toFixed(2)} ימים` : "",
                 },
                 {
                   id: "sick_days_used",
@@ -1185,7 +1232,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       className="min-h-10 h-auto text-sm"
                     />
                   ),
-                  render: (value) => value ? `${Number(value).toFixed(2)} ימים` : "N/A",
+                  render: (value) => value !== null && value !== undefined ? `${Number(value).toFixed(2)} ימים` : "",
                 },
                 {
                   id: "miluim_days",
@@ -1199,7 +1246,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       className="min-h-10 h-auto text-sm"
                     />
                   ),
-                  render: (value) => value ? `${Number(value).toFixed(2)} ימים` : "N/A",
+                  render: (value) => value !== null && value !== undefined ? `${Number(value).toFixed(2)} ימים` : "",
                 },
                 {
                   id: "havraa_days_used",
@@ -1213,7 +1260,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       className="min-h-10 h-auto text-sm"
                     />
                   ),
-                  render: (value) => value ? `${Number(value).toFixed(2)} ימים` : "N/A",
+                  render: (value) => value !== null && value !== undefined ? `${Number(value).toFixed(2)} ימים` : "",
                 },
               ]}
               data={filteredAttendance}
@@ -1318,7 +1365,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                 additional_credit_points: { label: 'נקודות זיכוי נוספות', type: 'number', span: 1, render: (value, isEditing, onChange) => {
                     // Custom render to support DECIMAL(5,2) - allow 2 decimal places
                     if (!isEditing) {
-                      return <span className="text-sm">{value !== null && value !== undefined ? Number(value).toFixed(2) : 'N/A'}</span>;
+                      return <span className="text-sm">{value !== null && value !== undefined ? Number(value).toFixed(2) : ''}</span>;
                     }
                     return (
                       <Input
@@ -1402,7 +1449,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       className="min-h-10 h-auto text-sm"
                     />
                   ),
-                  render: (value) => value || "N/A",
+                  render: (value) => value || "",
                 },
                 {
                   id: "pension_policy_no",
@@ -1414,7 +1461,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       className="min-h-10 h-auto text-sm"
                     />
                   ),
-                  render: (value) => value || "N/A",
+                  render: (value) => value || "",
                 },
                 {
                   id: "pension_is_amount_based",
@@ -1439,7 +1486,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       className="min-h-10 h-auto text-sm"
                     />
                   ),
-                  render: (value) => value ? `${Number(value).toFixed(2)}%` : "N/A",
+                  render: (value) => value ? `${Number(value).toFixed(2)}%` : "",
                 },
                 {
                   id: "employee_pension_pct",
@@ -1453,7 +1500,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       className="min-h-10 h-auto text-sm"
                     />
                   ),
-                  render: (value) => value ? `${Number(value).toFixed(2)}%` : "N/A",
+                  render: (value) => value ? `${Number(value).toFixed(2)}%` : "",
                 },
                 {
                   id: "employer_severance_pct",
@@ -1467,7 +1514,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       className="min-h-10 h-auto text-sm"
                     />
                   ),
-                  render: (value) => value ? `${Number(value).toFixed(2)}%` : "N/A",
+                  render: (value) => value ? `${Number(value).toFixed(2)}%` : "",
                 },
                 {
                   id: "employer_disability_pct",
@@ -1481,7 +1528,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       className="min-h-10 h-auto text-sm"
                     />
                   ),
-                  render: (value) => value ? `${Number(value).toFixed(2)}%` : "N/A",
+                  render: (value) => value ? `${Number(value).toFixed(2)}%` : "",
                 },
                 {
                   id: "employee_disability_pct",
@@ -1495,7 +1542,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       className="min-h-10 h-auto text-sm"
                     />
                   ),
-                  render: (value) => value ? `${Number(value).toFixed(2)}%` : "N/A",
+                  render: (value) => value ? `${Number(value).toFixed(2)}%` : "",
                 },
                 {
                   id: "pension_ceiling_monthly",
@@ -1509,7 +1556,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       className="min-h-10 h-auto text-sm"
                     />
                   ),
-                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "N/A",
+                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "",
                 },
                 {
                   id: "employer_pension_amount",
@@ -1523,7 +1570,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       className="min-h-10 h-auto text-sm"
                     />
                   ),
-                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "N/A",
+                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "",
                 },
                 {
                   id: "employee_pension_amount",
@@ -1537,7 +1584,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       className="min-h-10 h-auto text-sm"
                     />
                   ),
-                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "N/A",
+                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "",
                 },
                 {
                   id: "employer_severance_amount",
@@ -1551,7 +1598,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       className="min-h-10 h-auto text-sm"
                     />
                   ),
-                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "N/A",
+                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "",
                 },
                 {
                   id: "employer_disability_amount",
@@ -1565,7 +1612,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       className="min-h-10 h-auto text-sm"
                     />
                   ),
-                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "N/A",
+                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "",
                 },
                 {
                   id: "employee_disability_amount",
@@ -1579,7 +1626,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       className="min-h-10 h-auto text-sm"
                     />
                   ),
-                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "N/A",
+                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "",
                 },
                 {
                   id: "kh_enabled",
@@ -1615,7 +1662,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       className="min-h-10 h-auto text-sm"
                     />
                   ),
-                  render: (value) => value ? `${Number(value).toFixed(2)}%` : "N/A",
+                  render: (value) => value ? `${Number(value).toFixed(2)}%` : "",
                 },
                 {
                   id: "kh_employee_pct",
@@ -1629,7 +1676,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       className="min-h-10 h-auto text-sm"
                     />
                   ),
-                  render: (value) => value ? `${Number(value).toFixed(2)}%` : "N/A",
+                  render: (value) => value ? `${Number(value).toFixed(2)}%` : "",
                 },
                 {
                   id: "kh_ceiling_monthly",
@@ -1643,7 +1690,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       className="min-h-10 h-auto text-sm"
                     />
                   ),
-                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "N/A",
+                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "",
                 },
                 {
                   id: "kh_employer_amount",
@@ -1657,7 +1704,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       className="min-h-10 h-auto text-sm"
                     />
                   ),
-                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "N/A",
+                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "",
                 },
                 {
                   id: "kh_employee_amount",
@@ -1671,7 +1718,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       className="min-h-10 h-auto text-sm"
                     />
                   ),
-                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "N/A",
+                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "",
                 },
               ]}
               data={Array.isArray(employeeDetail?.pension_profile) ? employeeDetail.pension_profile : (employeeDetail?.pension_profile ? [employeeDetail.pension_profile] : [])}
@@ -1836,8 +1883,13 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                     />
                   ),
                   render: (value, row) => {
-                    // Show only the item_code (not the description)
-                    if (!value) return "N/A";
+                    // Show item_code + description from xlg_pay_items
+                    if (!value) return "";
+                    // Check for pay_item_name_from_lookup (from JOIN with xlg_pay_items) or item_name
+                    const description = row.pay_item_name_from_lookup || row.item_name;
+                    if (description) {
+                      return `${value} - ${description}`;
+                    }
                     return String(value);
                   },
                 },
@@ -1853,7 +1905,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       style={{ minWidth: '250px' }}
                     />
                   ),
-                  render: (value) => value !== null && value !== undefined ? (value || "") : "N/A",
+                    render: (value) => value !== null && value !== undefined ? (value || "") : "",
                 },
                 {
                   id: "is_hour_based",
@@ -1879,11 +1931,12 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       style={{ minWidth: '150px' }}
                     />
                   ),
-                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "N/A",
+                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "",
                 },
                 {
                   id: "quantity",
                   label: "כמות",
+                  width: "150px",
                   editor: (value, row, onChange) => (
                     <Input
                       type="number"
@@ -1891,13 +1944,15 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       value={value || ""}
                       onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
                       className="min-h-10 h-auto text-sm"
+                      style={{ minWidth: '150px', width: '100%' }}
                     />
                   ),
-                  render: (value) => value ? `${Number(value).toFixed(2)}` : "N/A",
+                    render: (value) => value ? `${Number(value).toFixed(2)}` : "",
                 },
                 {
                   id: "rate",
                   label: "תעריף",
+                  width: "150px",
                   editor: (value, row, onChange) => (
                     <Input
                       type="number"
@@ -1905,13 +1960,15 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       value={value || ""}
                       onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
                       className="min-h-10 h-auto text-sm"
+                      style={{ minWidth: '150px', width: '100%' }}
                     />
                   ),
-                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "N/A",
+                  render: (value) => value ? `₪${Number(value).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "",
                 },
                 {
                   id: "pct",
                   label: "אחוז",
+                  width: "150px",
                   editor: (value, row, onChange) => (
                     <Input
                       type="number"
@@ -1919,9 +1976,10 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       value={value || ""}
                       onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
                       className="min-h-10 h-auto text-sm"
+                      style={{ minWidth: '150px', width: '100%' }}
                     />
                   ),
-                  render: (value) => value ? `${Number(value).toFixed(2)}%` : "N/A",
+                  render: (value) => value ? `${Number(value).toFixed(2)}%` : "",
                 },
                 {
                   id: "comments",
@@ -1933,7 +1991,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       className="min-h-10 h-auto text-sm"
                     />
                   ),
-                  render: (value) => value || "N/A",
+                  render: (value) => value || "",
                 },
                 {
                   id: "department_number",
@@ -1948,7 +2006,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       emptyLabel="ללא"
                     />
                   ),
-                  render: (value) => value || "N/A",
+                  render: (value) => value || "",
                 },
                 {
                   id: "effective_to",
@@ -2006,7 +2064,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       />
                     );
                   },
-                  render: (value) => value ? new Date(value).toLocaleDateString("he-IL") : "N/A",
+                  render: (value) => value ? new Date(value).toLocaleDateString("he-IL") : "",
                 },
               ]}
               data={employeeDetail?.pay_items || []}
@@ -2093,7 +2151,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                 <div className="p-3 border border-gray-200 rounded-lg">
                   <h4 className="text-sm font-semibold text-text-main mb-1">{t('fields.pensionPlan')}</h4>
                   <p className="text-xs text-text-muted">
-                    {employeeDetail.pension_profile.pension_provider || "N/A"}
+                    {employeeDetail.pension_profile.pension_provider || ""}
                     {employeeDetail.pension_profile.contribution_rate !== null && employeeDetail.pension_profile.contribution_rate !== undefined
                       ? ` - ${Number(employeeDetail.pension_profile.contribution_rate)}% contribution`
                       : ""}
@@ -2133,7 +2191,7 @@ export function EmployeeDetail({ employee, employeeDetail, onSave, onTerminate }
                       <p className="text-xs text-text-muted mt-1">
                         {tCommon('status')}: <span className={`${
                           contract.status === "Active" ? "text-green-600" : "text-gray-600"
-                        }`}>{contract.status || "N/A"}</span>
+                        }`}>{contract.status || ""}</span>
                       </p>
                     </div>
                   </div>

@@ -274,7 +274,7 @@ export class EmployeesService extends BaseTenantService {
       
       // Return ALL columns from the database, not just mapped ones
       // This ensures all fields (tz_id, gender, date_of_birth, address_line1, etc.) are available
-      const employee: any = {
+        const employee: any = {
         // Map required Employee interface fields
         id: row.employee_id || '',
         employee_code: row.employee_id || row.tz_id || undefined,
@@ -288,6 +288,7 @@ export class EmployeesService extends BaseTenantService {
         department_id: row.department_number ? String(row.department_number) : undefined,
         position: row.job_title || undefined,
         status: row.employment_status || undefined,
+        employment_status: row.employment_status || undefined, // Keep original field name as well
         hire_date: row.hire_date || undefined,
         created_at: undefined, // Not in schema
         updated_at: undefined, // Not in schema
@@ -296,10 +297,10 @@ export class EmployeesService extends BaseTenantService {
         ...Object.keys(row).reduce((acc, key) => {
           // Only add fields that weren't already mapped above
           // Exclude: employee_id (mapped to id), first_name, last_name (mapped to full_name), 
-          // email, cell_phone_number (mapped to phone), job_title (mapped to position), 
-          // employment_status (mapped to status), hire_date
+          // email, cell_phone_number (mapped to phone), job_title (mapped to position), hire_date
+          // Keep employment_status - already added explicitly above, but don't exclude it here
           // DO NOT exclude department_number - we need it for the lookup!
-          if (!['employee_id', 'first_name', 'last_name', 'email', 'cell_phone_number', 'job_title', 'employment_status', 'hire_date'].includes(key)) {
+          if (!['employee_id', 'first_name', 'last_name', 'email', 'cell_phone_number', 'job_title', 'hire_date'].includes(key)) {
             acc[key] = row[key];
           }
           return acc;
@@ -493,6 +494,8 @@ export class EmployeesService extends BaseTenantService {
           const lowerKey = key.toLowerCase();
           if (lowerKey.includes('pay_item_type') || lowerKey === 'pay_item_type') mapped.pay_item_type = row[key];
           if (lowerKey.includes('item_name') || lowerKey === 'item_name') mapped.item_name = row[key];
+          // Also preserve pay_item_name_from_lookup for display purposes in item_code column
+          if (key === 'pay_item_name_from_lookup') mapped.pay_item_name_from_lookup = row[key];
           if (lowerKey.includes('amount') || lowerKey === 'amount') mapped.amount = row[key];
           if (lowerKey.includes('is_active') || lowerKey === 'is_active') mapped.is_active = row[key];
         });
@@ -1337,10 +1340,31 @@ export class EmployeesService extends BaseTenantService {
       }
     } else {
       // INSERT
-      const insertFields = ['employee_id'];
-      const insertValues = ['@employeeId'];
+      // Get client_id from employee
+      let clientId: string | null = null;
+      try {
+        const clientIdRequest = new sql.Request(transaction);
+        clientIdRequest.input('employeeId', sql.NVarChar, employeeId);
+        const clientIdResult = await clientIdRequest.query(`
+          SELECT client_id FROM employees WHERE employee_id = @employeeId
+        `);
+        if (clientIdResult.recordset.length > 0) {
+          clientId = clientIdResult.recordset[0].client_id;
+        }
+      } catch (clientIdError: any) {
+        this.logger.error(`[saveTaxProfileInTransaction] Error getting client_id:`, clientIdError);
+        throw new Error(`Cannot save tax profile: missing client_id`);
+      }
+      
+      if (!clientId) {
+        throw new Error(`Cannot save tax profile: client_id is required`);
+      }
+      
+      const insertFields = ['employee_id', 'client_id'];
+      const insertValues = ['@employeeId', '@clientId'];
       const insertRequest = new sql.Request(transaction);
       insertRequest.input('employeeId', sql.NVarChar, employeeId);
+      insertRequest.input('clientId', sql.NVarChar, clientId);
 
       Object.keys(taxData).forEach((key) => {
         if (key !== 'employee_id' && key !== 'client_id' && taxData[key] !== undefined) {
@@ -1435,16 +1459,41 @@ export class EmployeesService extends BaseTenantService {
         deleteRequest.input('employeeId', sql.NVarChar, employeeId);
         
         if (!primaryKeyExists) {
-          // For tables without a primary key column (like employees_bank_details),
-          // we need to find the record by matching bank_code from the original data
-          // Since we only have the id, we need to find the record in the original set
-          // For now, use a simpler approach: delete by employee_id only if no PK exists
-          // This is not ideal but works for bank_details which typically has one row per employee
-          // For tables without PK, try to use bank_code if available in the original data
-          // For now, delete all rows for this employee (should be improved to track bank_code)
-          await deleteRequest.query(
-            `DELETE FROM ${tableName} WHERE employee_id = @employeeId`
-          );
+          // For tables without a primary key column (like employees_bank_details, employees_attendance),
+          // we need to handle DELETE differently based on table type
+          if (tableName === 'employees_bank_details') {
+            // For bank_details, if we have bank_code in the deleted record, use it
+            // Otherwise, delete all rows for this employee (less precise but works)
+            if (typeof id === 'object' && id !== null && (id as any).bank_code) {
+              deleteRequest.input('bankCode', sql.NVarChar, String((id as any).bank_code).trim());
+              // Get client_id from employee
+              const clientIdRequest = new sql.Request(transaction);
+              clientIdRequest.input('employeeId', sql.NVarChar, employeeId);
+              const clientIdResult = await clientIdRequest.query(`
+                SELECT client_id FROM employees WHERE employee_id = @employeeId
+              `);
+              if (clientIdResult.recordset.length > 0) {
+                const clientId = clientIdResult.recordset[0].client_id;
+                deleteRequest.input('clientId', sql.NVarChar, clientId);
+                await deleteRequest.query(
+                  `DELETE FROM ${tableName} WHERE LTRIM(RTRIM(client_id)) = LTRIM(RTRIM(@clientId)) AND LTRIM(RTRIM(employee_id)) = LTRIM(RTRIM(@employeeId)) AND LTRIM(RTRIM(bank_code)) = LTRIM(RTRIM(@bankCode))`
+                );
+              } else {
+                await deleteRequest.query(
+                  `DELETE FROM ${tableName} WHERE employee_id = @employeeId`
+                );
+              }
+            } else {
+              await deleteRequest.query(
+                `DELETE FROM ${tableName} WHERE employee_id = @employeeId`
+              );
+            }
+          } else {
+            // For other tables without PK, delete all rows for this employee
+            await deleteRequest.query(
+              `DELETE FROM ${tableName} WHERE employee_id = @employeeId`
+            );
+          }
         } else {
           // Support both string and number IDs based on column data type
           const isPrimaryKeyNumeric = primaryKeyDataType && (
@@ -1468,13 +1517,14 @@ export class EmployeesService extends BaseTenantService {
 
     // UPDATE
     if (changes.updated && changes.updated.length > 0) {
-      // For employees_bank_details, convert UPDATE to INSERT to use MERGE (UPSERT)
+      // For employees_bank_details, convert UPDATE to INSERT to use UPSERT (DELETE then INSERT)
       if (tableName === 'employees_bank_details' && !primaryKeyExists) {
-        // Move all updates to created array - they'll be handled by MERGE in INSERT section
+        // Simple approach: move all updates to created array - they'll be handled by INSERT section
+        // The INSERT section will DELETE all existing records before inserting
         if (!changes.created) changes.created = [];
         changes.created.push(...changes.updated);
         changes.updated = []; // Clear updates since they're now in created
-        this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Converted ${changes.created.length} UPDATE(s) to MERGE via INSERT section`);
+        this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Converted ${changes.created.length} UPDATE(s) to UPSERT via INSERT section`);
       }
       
       for (const record of changes.updated) {
@@ -1608,10 +1658,11 @@ export class EmployeesService extends BaseTenantService {
             return;
           }
           
-          // For bank_details without PK, skip bank_code from UPDATE SET (it's used in WHERE)
-          if (!primaryKeyExists && tableName === 'employees_bank_details' && columnLower === 'bank_code') {
-            return;
-          }
+          // For bank_details without PK, don't skip bank_code in UPDATE SET - we need to update it if changed
+          // But we'll use it in WHERE clause for the UPDATE, so we'll include it in SET as well
+          // Actually, we should NOT skip it - if bank_code changes, we need to update it
+          // But wait - if bank_code is part of the composite key, we can't UPDATE it - we need DELETE+INSERT
+          // So for bank_details, UPDATE is converted to DELETE+INSERT anyway, so this code won't be reached
           
           // For attendance without PK, skip period_id and client_id from UPDATE SET (they're used in WHERE)
           if (!primaryKeyExists && tableName === 'employees_attendance' && (columnLower === 'period_id' || columnLower === 'client_id')) {
@@ -1695,6 +1746,21 @@ export class EmployeesService extends BaseTenantService {
         }
       }
       
+      // For employees_bank_details: DELETE ALL existing records for this employee FIRST
+      // Simple approach: delete everything once, then insert all (new + updated) records
+      // This prevents duplicate key errors completely
+      if (tableName === 'employees_bank_details' && hasClientIdColumn && clientId) {
+        const deleteAllRequest = new sql.Request(transaction);
+        deleteAllRequest.input('clientId', sql.NVarChar, String(clientId).trim());
+        deleteAllRequest.input('employeeId', sql.NVarChar, employeeId);
+        const deleteAllResult = await deleteAllRequest.query(`
+          DELETE FROM ${tableName} 
+          WHERE LTRIM(RTRIM(client_id)) = LTRIM(RTRIM(@clientId)) 
+            AND LTRIM(RTRIM(employee_id)) = LTRIM(RTRIM(@employeeId))
+        `);
+        this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Deleted ALL existing records for employee (${deleteAllResult.rowsAffected[0]} rows) - will insert ${changes.created.length} records`);
+      }
+      
       for (const record of changes.created) {
         this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Processing record: ${JSON.stringify(record)}`);
         
@@ -1775,6 +1841,13 @@ export class EmployeesService extends BaseTenantService {
           const isRequiredPayItemField = tableName === 'employees_pay_items' && 
             (column === 'pct' || column === 'quantity' || column === 'rate');
           
+          // For employees_attendance, miluim_days cannot be NULL - set default to 0
+          const isRequiredAttendanceField = tableName === 'employees_attendance' && 
+            (column === 'miluim_days' || column === 'vacation_days' || column === 'sick_days' || column === 'recovery_days');
+          
+          // For employees_bank_details, bank_code is ALWAYS required (part of composite key)
+          const isRequiredBankDetailField = tableName === 'employees_bank_details' && columnLower === 'bank_code';
+          
           // Skip if column doesn't exist in record and it's not a required field
           // This prevents trying to use 'id' from frontend when table doesn't have 'id' column
           // Also skip if column is 'id' and it's not the primary key (should have been caught above, but double-check)
@@ -1783,19 +1856,21 @@ export class EmployeesService extends BaseTenantService {
             return;
           }
           
-          if (!hasValue && !isRequiredPayItemField) {
+          // For bank_details, don't skip bank_code even if not in record - we'll get it from the record later
+          if (!hasValue && !isRequiredPayItemField && !isRequiredAttendanceField && !isRequiredBankDetailField) {
             return;
           }
           
-          if (hasValue || isRequiredPayItemField) {
+          // For bank_code in bank_details, if it's not in record, we'll handle it in the INSERT section
+          if (hasValue || isRequiredPayItemField || isRequiredAttendanceField || isRequiredBankDetailField) {
             this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Adding column '${column}' to INSERT (hasValue: ${hasValue}, isRequiredPayItemField: ${isRequiredPayItemField})`);
             insertFields.push(column);
             insertValues.push(`@${column.replace(/_/g, '')}`);
 
             // Map data types
             if (value === null || value === undefined) {
-              if (isRequiredPayItemField) {
-                // For required fields in pay_items, use 0 as default
+              if (isRequiredPayItemField || isRequiredAttendanceField) {
+                // For required fields in pay_items and attendance, use 0 as default
                 if (isDecimalField) {
                   insertRequest.input(column.replace(/_/g, ''), sql.Decimal(18, 2), 0);
                 } else if (isIntField) {
@@ -1867,43 +1942,41 @@ export class EmployeesService extends BaseTenantService {
             `;
             await insertRequest.query(insertQuery);
             this.logger.debug(`[saveDetailTableInTransaction ${tableName}] DELETED and INSERTED record`);
-          } else if (tableName === 'employees_bank_details' && recordToUse.bank_code) {
+          } else if (tableName === 'employees_bank_details') {
+            // For bank_details, ALWAYS do DELETE then INSERT (UPSERT)
+            // bank_code is required for bank_details
             if (!hasClientIdColumn || !clientId) {
               throw new Error(`Cannot save ${tableName}: client_id is required`);
             }
             
-            const bankCodeValue = String(recordToUse.bank_code).trim();
-            if (!bankCodeValue) {
+            // Get bank_code from record
+            // NOTE: All existing records for this employee were already deleted at the start of INSERT section (line ~1756)
+            // So we just INSERT - no need to DELETE again per record!
+            let bankCodeValue = (recordToUse.bank_code || record.bank_code) ? String(recordToUse.bank_code || record.bank_code).trim() : null;
+            
+            if (!bankCodeValue || bankCodeValue === 'null' || bankCodeValue === 'undefined' || bankCodeValue === '') {
               throw new Error(`Cannot save ${tableName}: bank_code is required`);
             }
             
-            this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Before DELETE - client_id: "${clientId}", employee_id: "${employeeId}", bank_code: "${bankCodeValue}"`);
-            
-            // DELETE existing record by PRIMARY KEY (client_id, employee_id, bank_code)
-            const deleteRequest = new sql.Request(transaction);
-            deleteRequest.input('clientId', sql.NVarChar, String(clientId).trim());
-            deleteRequest.input('employeeId', sql.NVarChar, String(employeeId).trim());
-            deleteRequest.input('bankCode', sql.NVarChar, bankCodeValue);
-            const deleteResult = await deleteRequest.query(`
-              DELETE FROM ${tableName} 
-              WHERE LTRIM(RTRIM(client_id)) = LTRIM(RTRIM(@clientId)) 
-                AND LTRIM(RTRIM(employee_id)) = LTRIM(RTRIM(@employeeId)) 
-                AND LTRIM(RTRIM(bank_code)) = LTRIM(RTRIM(@bankCode))
-            `);
-            this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Deleted ${deleteResult.rowsAffected[0]} existing record(s) - PK: (${clientId}, ${employeeId}, ${bankCodeValue})`);
-            
-            // Now INSERT - ensure bank_code is in insertFields
+            // Ensure bank_code is in insertFields
+            // NOTE: bank_code might already be added by the column loop above (lines 1865-1902)
+            // If it's already there, the parameter 'bankcode' was already defined - don't define it again!
             if (!insertFields.includes('bank_code')) {
+              // bank_code not in insertFields - add it now
               insertFields.push('bank_code');
               insertValues.push('@bankcode');
+              insertRequest.input('bankcode', sql.NVarChar, bankCodeValue);
+              this.logger.debug(`[saveDetailTableInTransaction ${tableName}] Added bank_code to INSERT: ${bankCodeValue}`);
+            } else {
+              // bank_code already in insertFields - parameter was already defined in column loop
+              // DON'T call insertRequest.input('bankcode', ...) again - it will cause "parameter already declared" error
+              // The value from the column loop should be correct, but if we need to override it,
+              // we would need to skip it in the column loop or handle it differently
+              this.logger.debug(`[saveDetailTableInTransaction ${tableName}] bank_code already in insertFields - skipping parameter re-definition (value should be: ${bankCodeValue})`);
             }
             
-            const insertQuery = `
-              INSERT INTO ${tableName} (${insertFields.join(', ')})
-              VALUES (${insertValues.join(', ')})
-            `;
+            const insertQuery = `INSERT INTO ${tableName} (${insertFields.join(', ')}) VALUES (${insertValues.join(', ')})`;
             await insertRequest.query(insertQuery);
-            this.logger.debug(`[saveDetailTableInTransaction ${tableName}] DELETED and INSERTED record`);
           } else {
             // Regular INSERT for tables with single-column PK or no PK conflicts
             const insertQuery = `
@@ -2031,99 +2104,263 @@ export class EmployeesService extends BaseTenantService {
     try {
       const request = pool.request();
       
-      // Mandatory parameters
-      request.input('client_id', sql.NVarChar, tenantCode);
+      // Mandatory parameters - log each one before adding
+      this.logger.debug(`[addEmployee] Adding mandatory parameters...`);
+      request.input('client_id', sql.NVarChar, tenantCode || null);
+      this.logger.debug(`[addEmployee] Added client_id: ${tenantCode}`);
+      
+      if (!dto.employee_id) {
+        throw new BadRequestException('employee_id is required');
+      }
       request.input('employee_id', sql.NVarChar, dto.employee_id);
+      this.logger.debug(`[addEmployee] Added employee_id: ${dto.employee_id}`);
+      
+      if (!dto.tz_id) {
+        throw new BadRequestException('tz_id is required');
+      }
       request.input('tz_id', sql.NVarChar, dto.tz_id);
+      this.logger.debug(`[addEmployee] Added tz_id: ${dto.tz_id}`);
+      
+      if (!dto.first_name) {
+        throw new BadRequestException('first_name is required');
+      }
       request.input('first_name', sql.NVarChar, dto.first_name);
+      this.logger.debug(`[addEmployee] Added first_name: ${dto.first_name}`);
+      
+      if (!dto.last_name) {
+        throw new BadRequestException('last_name is required');
+      }
       request.input('last_name', sql.NVarChar, dto.last_name);
+      this.logger.debug(`[addEmployee] Added last_name: ${dto.last_name}`);
+      
+      if (!dto.gender) {
+        throw new BadRequestException('gender is required');
+      }
       request.input('gender', sql.NVarChar, dto.gender);
-      request.input('date_of_birth', sql.Date, dto.date_of_birth ? new Date(dto.date_of_birth) : null);
-      request.input('hire_date', sql.Date, dto.hire_date ? new Date(dto.hire_date) : null);
+      this.logger.debug(`[addEmployee] Added gender: ${dto.gender}`);
+      
+      if (!dto.date_of_birth) {
+        throw new BadRequestException('date_of_birth is required');
+      }
+      const dobDate = dto.date_of_birth ? new Date(dto.date_of_birth) : null;
+      request.input('date_of_birth', sql.Date, dobDate);
+      this.logger.debug(`[addEmployee] Added date_of_birth: ${dobDate}`);
+      
+      if (!dto.hire_date) {
+        throw new BadRequestException('hire_date is required');
+      }
+      const hireDate = dto.hire_date ? new Date(dto.hire_date) : null;
+      request.input('hire_date', sql.Date, hireDate);
+      this.logger.debug(`[addEmployee] Added hire_date: ${hireDate}`);
+      
+      if (!dto.employment_status) {
+        throw new BadRequestException('employment_status is required');
+      }
       request.input('employment_status', sql.NVarChar, dto.employment_status);
-      request.input('department_number', sql.Int, dto.department_number);
+      this.logger.debug(`[addEmployee] Added employment_status: ${dto.employment_status}`);
+      
+      if (dto.department_number === undefined || dto.department_number === null) {
+        throw new BadRequestException('department_number is required');
+      }
+      request.input('department_number', sql.Int, Number(dto.department_number));
+      this.logger.debug(`[addEmployee] Added department_number: ${dto.department_number}`);
       
       // Optional parameters
       if (dto.employment_percent !== undefined && dto.employment_percent !== null) {
-        request.input('employment_percent', sql.Decimal(18, 2), dto.employment_percent);
+        request.input('employment_percent', sql.Decimal(18, 2), Number(dto.employment_percent));
+        this.logger.debug(`[addEmployee] Added employment_percent: ${dto.employment_percent}`);
       }
       if (dto.address_line1 !== undefined) {
         request.input('address_line1', sql.NVarChar, dto.address_line1 || null);
+        this.logger.debug(`[addEmployee] Added address_line1: ${dto.address_line1}`);
       }
       if (dto.address_line2 !== undefined) {
         request.input('address_line2', sql.NVarChar, dto.address_line2 || null);
+        this.logger.debug(`[addEmployee] Added address_line2: ${dto.address_line2}`);
       }
       if (dto.city_code !== undefined && dto.city_code !== null) {
-        request.input('city_code', sql.Int, dto.city_code);
+        request.input('city_code', sql.Int, Number(dto.city_code));
+        this.logger.debug(`[addEmployee] Added city_code: ${dto.city_code}`);
       }
       if (dto.zip_code !== undefined) {
         request.input('zip_code', sql.NVarChar, dto.zip_code || null);
+        this.logger.debug(`[addEmployee] Added zip_code: ${dto.zip_code}`);
       }
       if (dto.cell_phone_number !== undefined) {
         request.input('cell_phone_number', sql.NVarChar, dto.cell_phone_number || null);
+        this.logger.debug(`[addEmployee] Added cell_phone_number: ${dto.cell_phone_number}`);
       }
       if (dto.email !== undefined) {
         request.input('email', sql.NVarChar, dto.email || null);
+        this.logger.debug(`[addEmployee] Added email: ${dto.email}`);
       }
       if (dto.termination_date !== undefined) {
         request.input('termination_date', sql.Date, dto.termination_date ? new Date(dto.termination_date) : null);
+        this.logger.debug(`[addEmployee] Added termination_date: ${dto.termination_date}`);
       }
       if (dto.job_title !== undefined) {
         request.input('job_title', sql.NVarChar, dto.job_title || null);
+        this.logger.debug(`[addEmployee] Added job_title: ${dto.job_title}`);
       }
       if (dto.site_number !== undefined && dto.site_number !== null) {
-        request.input('site_number', sql.Int, dto.site_number);
+        request.input('site_number', sql.Int, Number(dto.site_number));
+        this.logger.debug(`[addEmployee] Added site_number: ${dto.site_number}`);
       }
       if (dto.manager_id !== undefined) {
         request.input('manager_id', sql.NVarChar, dto.manager_id || null);
+        this.logger.debug(`[addEmployee] Added manager_id: ${dto.manager_id}`);
       }
       if (dto.is_active !== undefined) {
         request.input('is_active', sql.Bit, dto.is_active !== false);
+        this.logger.debug(`[addEmployee] Added is_active: ${dto.is_active}`);
       }
       
-      // Output parameters - must be declared BEFORE execute
+      // Output parameters - must be declared AFTER all input parameters, but BEFORE execute
+      // NOTE: These are INOUT parameters, so we should use .input() with OUTPUT option, but .output() should work too
       request.output('status_code', sql.Int);
       request.output('status_message', sql.NVarChar(400));
+      this.logger.debug(`[addEmployee] Added output parameters: status_code (Int), status_message (NVarChar(400))`);
       
+      // Log all parameters that will be sent to SP
+      this.logger.log(`[addEmployee] ========================================`);
       this.logger.log(`[addEmployee] Calling sp_add_employee for employee_id: ${dto.employee_id}, tenant: ${tenantCode}`);
-      this.logger.debug(`[addEmployee] Input parameters:`, {
-        client_id: tenantCode,
-        employee_id: dto.employee_id,
-        tz_id: dto.tz_id,
-        first_name: dto.first_name,
-        last_name: dto.last_name,
-        gender: dto.gender,
-        date_of_birth: dto.date_of_birth,
-        hire_date: dto.hire_date,
-        employment_status: dto.employment_status,
-        department_number: dto.department_number,
-      });
+      this.logger.log(`[addEmployee] Full DTO:`, JSON.stringify(dto, null, 2));
+      
+      // Log all input parameters that were added - IMPORTANT FOR DEBUGGING
+      const allParams: string[] = [];
+      if (tenantCode) allParams.push(`client_id=${tenantCode}`);
+      if (dto.employee_id) allParams.push(`employee_id=${dto.employee_id}`);
+      if (dto.tz_id) allParams.push(`tz_id=${dto.tz_id}`);
+      if (dto.first_name) allParams.push(`first_name=${dto.first_name}`);
+      if (dto.last_name) allParams.push(`last_name=${dto.last_name}`);
+      if (dto.gender) allParams.push(`gender=${dto.gender}`);
+      if (dto.date_of_birth) allParams.push(`date_of_birth=${dto.date_of_birth}`);
+      if (dto.hire_date) allParams.push(`hire_date=${dto.hire_date}`);
+      if (dto.employment_status) allParams.push(`employment_status=${dto.employment_status}`);
+      if (dto.department_number !== undefined && dto.department_number !== null) allParams.push(`department_number=${dto.department_number}`);
+      if (dto.employment_percent !== undefined && dto.employment_percent !== null) allParams.push(`employment_percent=${dto.employment_percent}`);
+      if (dto.address_line1 !== undefined) allParams.push(`address_line1=${dto.address_line1 || 'null'}`);
+      if (dto.address_line2 !== undefined) allParams.push(`address_line2=${dto.address_line2 || 'null'}`);
+      if (dto.city_code !== undefined && dto.city_code !== null) allParams.push(`city_code=${dto.city_code}`);
+      if (dto.zip_code !== undefined) allParams.push(`zip_code=${dto.zip_code || 'null'}`);
+      if (dto.cell_phone_number !== undefined) allParams.push(`cell_phone_number=${dto.cell_phone_number || 'null'}`);
+      if (dto.email !== undefined) allParams.push(`email=${dto.email || 'null'}`);
+      if (dto.job_title !== undefined) allParams.push(`job_title=${dto.job_title || 'null'}`);
+      if (dto.site_number !== undefined && dto.site_number !== null) allParams.push(`site_number=${dto.site_number}`);
+      if (dto.manager_id !== undefined) allParams.push(`manager_id=${dto.manager_id || 'null'}`);
+      if (dto.is_active !== undefined) allParams.push(`is_active=${dto.is_active}`);
+      
+      this.logger.log(`[addEmployee] Parameters to SP: ${allParams.join(', ')}`);
+      this.logger.log(`[addEmployee] ========================================`);
       
       // Execute the stored procedure
       let result: any;
       try {
+        this.logger.log(`[addEmployee] Executing sp_add_employee...`);
         result = await request.execute('sp_add_employee');
         this.logger.log(`[addEmployee] SP executed successfully`);
+        this.logger.debug(`[addEmployee] SP result object keys:`, result ? Object.keys(result) : 'null');
+        this.logger.debug(`[addEmployee] SP recordsets count:`, result?.recordsets?.length || 0);
+        this.logger.debug(`[addEmployee] SP recordset count:`, result?.recordset?.length || 0);
+        if (result?.recordsets && result.recordsets.length > 0) {
+          result.recordsets.forEach((rs: any, idx: number) => {
+            this.logger.debug(`[addEmployee] Recordset ${idx} (${rs?.length || 0} rows):`, JSON.stringify(rs, null, 2));
+          });
+        }
+        if (result?.recordset && result.recordset.length > 0) {
+          this.logger.debug(`[addEmployee] Single recordset (${result.recordset.length} rows):`, JSON.stringify(result.recordset, null, 2));
+        }
       } catch (spError: any) {
-        this.logger.error(`[addEmployee] SP execution error:`, spError);
-        throw new BadRequestException(`Stored procedure error: ${spError?.message || 'Unknown error'}`);
+        this.logger.error(`[addEmployee] SP execution error:`, JSON.stringify(spError, Object.getOwnPropertyNames(spError)));
+        this.logger.error(`[addEmployee] SP error message:`, spError?.message);
+        this.logger.error(`[addEmployee] SP error code:`, spError?.code);
+        this.logger.error(`[addEmployee] SP error number:`, spError?.number);
+        this.logger.error(`[addEmployee] SP error state:`, spError?.state);
+        this.logger.error(`[addEmployee] SP error procName:`, spError?.procName);
+        this.logger.error(`[addEmployee] SP error lineNumber:`, spError?.lineNumber);
+        this.logger.error(`[addEmployee] SP error originalError:`, spError?.originalError);
+        this.logger.error(`[addEmployee] SP error stack:`, spError?.stack);
+        
+        // EREQUEST usually means a parameter issue - check if it's a missing parameter
+        if (spError?.code === 'EREQUEST') {
+          this.logger.error(`[addEmployee] ========== EREQUEST ERROR DETECTED ==========`);
+          this.logger.error(`[addEmployee] This usually indicates a missing or incorrectly named parameter.`);
+          this.logger.error(`[addEmployee] Error message: ${spError?.message}`);
+          this.logger.error(`[addEmployee] Error originalError:`, spError?.originalError);
+          this.logger.error(`[addEmployee] All parameters that were added:`);
+          this.logger.error(`[addEmployee] ${allParams.join(', ')}`);
+          this.logger.error(`[addEmployee] ============================================`);
+          
+          // Try to get more details from originalError
+          if (spError?.originalError?.message) {
+            this.logger.error(`[addEmployee] Original error message: ${spError.originalError.message}`);
+          }
+          if (spError?.originalError?.number) {
+            this.logger.error(`[addEmployee] SQL Error number: ${spError.originalError.number}`);
+          }
+        }
+        
+        // Try to extract more details from the error
+        let errorDetails = `Stored procedure error: ${spError?.message || 'Unknown error'}`;
+        if (spError?.number) {
+          errorDetails += ` (Error Number: ${spError.number})`;
+        }
+        if (spError?.code) {
+          errorDetails += ` (Error Code: ${spError.code})`;
+        }
+        if (spError?.state) {
+          errorDetails += ` (State: ${spError.state})`;
+        }
+        if (spError?.originalError?.message) {
+          errorDetails += ` (Original: ${spError.originalError.message})`;
+        }
+        
+        throw new BadRequestException({
+          message: errorDetails,
+          status_code: spError?.number || 99,
+          status_message: errorDetails,
+        });
       }
       
       // Try to get status from output parameters
       let statusCode: number | null = null;
       let statusMessage: string | null = null;
       
-      const statusCodeParam = request.parameters.status_code;
-      const statusMessageParam = request.parameters.status_message;
+      // Log all output parameters for debugging
+      this.logger.debug(`[addEmployee] Output parameters keys:`, Object.keys(result?.output || {}));
+      this.logger.debug(`[addEmployee] Output parameters:`, JSON.stringify(result?.output || {}, null, 2));
+      this.logger.debug(`[addEmployee] Request parameters:`, Object.keys(request.parameters || {}));
       
-      if (statusCodeParam && typeof statusCodeParam === 'object' && 'value' in statusCodeParam && statusCodeParam.value !== null) {
-        statusCode = statusCodeParam.value;
-        this.logger.log(`[addEmployee] Got status_code from output parameter: ${statusCode}`);
+      // Try to get from result.output first (newer mssql versions)
+      if (result?.output) {
+        if (result.output.status_code !== undefined && result.output.status_code !== null) {
+          statusCode = result.output.status_code;
+          this.logger.log(`[addEmployee] Got status_code from result.output: ${statusCode}`);
+        }
+        if (result.output.status_message !== undefined && result.output.status_message !== null) {
+          statusMessage = result.output.status_message;
+          this.logger.log(`[addEmployee] Got status_message from result.output: ${statusMessage}`);
+        }
       }
       
-      if (statusMessageParam && typeof statusMessageParam === 'object' && 'value' in statusMessageParam && statusMessageParam.value !== null) {
-        statusMessage = statusMessageParam.value;
-        this.logger.log(`[addEmployee] Got status_message from output parameter: ${statusMessage}`);
+      // Fallback to request.parameters if not found in result.output
+      if (statusCode === null || statusCode === undefined) {
+        const statusCodeParam = request.parameters?.status_code;
+        const statusMessageParam = request.parameters?.status_message;
+        
+        if (statusCodeParam !== undefined && statusCodeParam !== null) {
+          statusCode = typeof statusCodeParam === 'object' && 'value' in statusCodeParam 
+            ? statusCodeParam.value 
+            : statusCodeParam;
+          this.logger.log(`[addEmployee] Got status_code from request.parameters: ${statusCode}`);
+        }
+        
+        if (statusMessageParam !== undefined && statusMessageParam !== null) {
+          statusMessage = typeof statusMessageParam === 'object' && 'value' in statusMessageParam
+            ? statusMessageParam.value
+            : statusMessageParam;
+          this.logger.log(`[addEmployee] Got status_message from request.parameters: ${statusMessage}`);
+        }
       }
       
       // Try to get from recordsets (SP may return SELECT with status)

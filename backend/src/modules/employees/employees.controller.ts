@@ -83,9 +83,23 @@ export class EmployeesController {
       
       // If SP returned error code, throw an exception with the message
       if (result.status_code !== 0) {
+        const errorMessages: Record<number, string> = {
+          10: "לקוח לא נמצא",
+          11: "עובד כבר קיים",
+          12: "תעודת זהות לא תקינה",
+          13: "מין לא תקין",
+          14: "סטטוס העסקה לא תקין",
+          15: "מחלקה לא נמצאה או לא פעילה",
+          16: "אחוז העסקה מחוץ לטווח",
+          17: "אין תקופת שכר פתוחה או תאריך העסקה מחוץ לתקופה הנוכחית",
+          99: "שגיאה בלתי צפויה",
+        };
+        
+        const errorMessage = errorMessages[result.status_code] || result.status_message || `שגיאה בהוספת עובד (קוד שגיאה: ${result.status_code})`;
         throw new BadRequestException({
           status_code: result.status_code,
-          status_message: result.status_message,
+          status_message: errorMessage,
+          message: errorMessage,
         });
       }
       
@@ -96,11 +110,24 @@ export class EmployeesController {
         employee_id: result.employee_id,
       };
     } catch (error: any) {
-      this.logger.error(`[addEmployee] Error:`, error);
+      this.logger.error(`[addEmployee] Controller error:`, JSON.stringify(error, Object.getOwnPropertyNames(error)));
       
-      // If it's already a BadRequestException with status_code, return it as-is
-      if (error.response && error.response.status_code !== undefined) {
-        throw error;
+      // If it's already a BadRequestException with status_code/status_message, preserve them
+      if (error.response?.status_code !== undefined || error.response?.status_message) {
+        throw new BadRequestException({
+          message: error.response?.message || error.response?.status_message || error.message || 'Failed to add employee',
+          status_code: error.response?.status_code || 99,
+          status_message: error.response?.status_message || error.message || 'Failed to add employee',
+        });
+      }
+      
+      // If error has status_code and status_message directly
+      if (error.status_code !== undefined || error.status_message) {
+        throw new BadRequestException({
+          message: error.message || error.status_message || 'Failed to add employee',
+          status_code: error.status_code || 99,
+          status_message: error.status_message || error.message || 'Failed to add employee',
+        });
       }
       
       // Otherwise, wrap it

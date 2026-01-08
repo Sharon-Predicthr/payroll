@@ -26,7 +26,9 @@ export async function GET(request: NextRequest) {
     const page = searchParams.get('page') || '1';
     const limit = searchParams.get('limit') || '20';
     
-    const backendUrlWithParams = `${backendUrlClean}/employees?page=${page}&limit=${limit}`;
+    // Add timestamp to prevent any caching
+    const timestamp = Date.now();
+    const backendUrlWithParams = `${backendUrlClean}/employees?page=${page}&limit=${limit}&_t=${timestamp}`;
     console.log('[API Route] Calling backend:', backendUrlWithParams);
     
     const response = await fetch(backendUrlWithParams, {
@@ -34,7 +36,11 @@ export async function GET(request: NextRequest) {
       headers: {
         'Content-Type': 'application/json',
         'Authorization': authHeader,
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
       },
+      cache: 'no-store',
     });
 
     console.log('[API Route] Backend response status:', response.status);

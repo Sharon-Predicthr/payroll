@@ -14,7 +14,7 @@ export class PayslipsController {
   constructor(private payslipsService: PayslipsService) {}
 
   @Get('latest/:employeeId')
-  async getLatestPayslip(@Param('employeeId') employeeId: string, @Request() req: any) {
+  async getLatestPayslip(@Param('employeeId') employeeId: string, @Query('period_id') periodId: string | undefined, @Request() req: any) {
     try {
       const tenantId = req.user.tenant_id;
       const tenantCode = req.tenantCode;
@@ -27,6 +27,7 @@ export class PayslipsController {
         tenantCode,
         userId,
         userRole,
+        periodId,
       );
 
       if (!payslip) {

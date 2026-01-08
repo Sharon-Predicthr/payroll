@@ -140,7 +140,7 @@ export function EditableFields({
       // For select fields, show the selected option label
       if (field.type === "select" && field.options) {
         const selectedOption = field.options.find(opt => String(opt.value) === String(value));
-        const displayValue = selectedOption ? selectedOption.label : (value ? String(value) : "N/A");
+        const displayValue = selectedOption ? selectedOption.label : (value ? String(value) : "");
         return (
           <div
             key={field.id}
@@ -161,11 +161,11 @@ export function EditableFields({
       // Handle date fields - show YYYY-MM-DD format
       let displayValue = value;
       if (field.type === 'date') {
-        displayValue = formatDateOnly(value) || "N/A";
+        displayValue = formatDateOnly(value) || "";
       } else if (typeof value === 'boolean') {
         displayValue = value ? 'כן' : 'לא';
       } else if (value === null || value === undefined || value === '') {
-        displayValue = "N/A";
+        displayValue = "";
       } else {
         displayValue = String(value);
       }
@@ -197,7 +197,8 @@ export function EditableFields({
             onChange={(e) => handleChange(field.id, e.target.value ? Number(e.target.value) : null)}
             placeholder={field.placeholder}
             disabled={field.disabled}
-            className="h-8 text-sm"
+            className="h-8 text-sm min-w-[140px]"
+            style={{ width: '100%', maxWidth: '250px' }}
           />
         );
         break;
