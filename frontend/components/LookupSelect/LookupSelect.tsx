@@ -141,8 +141,9 @@ export function LookupSelect({
         return;
       }
 
-      // Check cache first (only for table lookups)
-      if (cache && lookupCache[lookupKey]) {
+      // Check cache first (only for table lookups, and only if not searching)
+      // Skip cache when searching to ensure fresh results
+      if (cache && lookupCache[lookupKey] && (!searchable || !searchTerm)) {
         const cached = lookupCache[lookupKey];
         if (Date.now() - cached.timestamp < CACHE_DURATION) {
           if (!cancelled) {
@@ -221,11 +222,10 @@ export function LookupSelect({
             }
             
             // Format label based on displayFormat
-            // For RTL (Hebrew), show description first, then code
             let label = description;
             if (displayFormat === 'code-description') {
-              // For Hebrew/RTL: show description first, then code in parentheses
-              label = description ? `${description} (${code})` : String(code);
+              // Show code first, then description (e.g., "0004 - שעות נוספות 125%")
+              label = description ? `${code} - ${description}` : String(code);
             } else if (displayFormat === 'code') {
               label = String(code);
             } else {
@@ -323,7 +323,7 @@ export function LookupSelect({
                   const description = rawItem.description || rawItem[labelKey] || rawItem.label || '';
                   let label = description;
                   if (displayFormat === 'code-description') {
-                    label = description ? `${description} (${code})` : String(code);
+                    label = description ? `${code} - ${description}` : String(code);
                   } else if (displayFormat === 'code') {
                     label = String(code);
                   } else {

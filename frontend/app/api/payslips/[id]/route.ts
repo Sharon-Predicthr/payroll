@@ -24,7 +24,10 @@ export async function GET(
       headers: {
         'Content-Type': 'application/json',
         'Authorization': authHeader,
+        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+        'Pragma': 'no-cache',
       },
+      cache: 'no-store',
     });
 
     const data = await response.json();

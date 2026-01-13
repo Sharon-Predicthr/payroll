@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { LookupSelect } from "@/components/LookupSelect";
 import { cn } from "@/lib/utils";
-import { formatDateOnly, parseDateOnly } from "@/lib/dateUtils";
+import { formatDateOnly, parseDateOnly, formatDateForDisplay } from "@/lib/dateUtils";
 
 export interface EditableField {
   id: string;
@@ -77,7 +77,7 @@ export function EditableFields({
   }, [isEditing]); // Only depend on isEditing to avoid overwriting user input while typing
 
   // Helper to get col-span class
-  const getColSpanClass = (span: number) => {
+  const getColSpanClass = useCallback((span: number) => {
     const spanMap: Record<number, string> = {
       1: "col-span-1",
       2: "col-span-2",
@@ -87,9 +87,9 @@ export function EditableFields({
       6: "col-span-6",
     };
     return spanMap[span] || "col-span-1";
-  };
+  }, []);
 
-  const renderField = (field: EditableField) => {
+  const renderField = useCallback((field: EditableField) => {
     // In read-only mode, prioritize field.value (set when field is created)
     // In edit mode, use localData (which can be updated by user)
     // This ensures that values are displayed correctly in both modes
@@ -158,10 +158,11 @@ export function EditableFields({
       
       // For other field types, show the value as text
       // Handle boolean values properly
-      // Handle date fields - show YYYY-MM-DD format
+      // Handle date fields - show dd/mm/yyyy for Hebrew, mm/dd/yyyy for others
       let displayValue = value;
       if (field.type === 'date') {
-        displayValue = formatDateOnly(value) || "";
+        // Use locale from closure, fallback to 'he' (Hebrew)
+        displayValue = formatDateForDisplay(value, 'he') || "";
       } else if (typeof value === 'boolean') {
         displayValue = value ? 'כן' : 'לא';
       } else if (value === null || value === undefined || value === '') {
@@ -301,7 +302,7 @@ export function EditableFields({
         {inputElement}
       </div>
     );
-  };
+  }, [isEditing, localData, handleChange, getColSpanClass]);
 
   // Use explicit Tailwind classes for grid columns to avoid dynamic class issues
   const gridColsClass = {

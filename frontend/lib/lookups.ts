@@ -138,6 +138,8 @@ export const LOOKUP_CONFIGS: Record<string, LookupConfig> = {
     valueKey: 'item_code',
     labelKey: 'item_name',
     displayFormat: 'code-description',
+    searchable: true,
+    searchFields: ['item_code', 'item_name'],
   },
   
   // countries for employees

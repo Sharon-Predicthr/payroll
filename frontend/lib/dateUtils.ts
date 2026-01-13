@@ -5,6 +5,7 @@
 /**
  * Format a date to YYYY-MM-DD format (date only, no time)
  * Accepts Date object, ISO string, or date string
+ * This format is used for HTML5 date inputs (type="date")
  */
 export function formatDateOnly(date: Date | string | null | undefined): string {
   if (!date) return '';
@@ -30,7 +31,7 @@ export function formatDateOnly(date: Date | string | null | undefined): string {
       return '';
     }
     
-    // Format as YYYY-MM-DD
+    // Format as YYYY-MM-DD (for HTML5 date input)
     const year = dateObj.getFullYear();
     const month = String(dateObj.getMonth() + 1).padStart(2, '0');
     const day = String(dateObj.getDate()).padStart(2, '0');
@@ -38,6 +39,39 @@ export function formatDateOnly(date: Date | string | null | undefined): string {
     return `${year}-${month}-${day}`;
   } catch (error) {
     console.error('Error formatting date:', error);
+    return '';
+  }
+}
+
+/**
+ * Format a date for display (dd/mm/yyyy for Hebrew locale, mm/dd/yyyy for others)
+ * Accepts Date object, ISO string, or date string
+ */
+export function formatDateForDisplay(date: Date | string | null | undefined, locale: string = 'he'): string {
+  if (!date) return '';
+  
+  try {
+    // Convert to Date object
+    const dateObj = date instanceof Date ? date : new Date(date);
+    
+    // Check if date is valid
+    if (isNaN(dateObj.getTime())) {
+      return '';
+    }
+    
+    const day = String(dateObj.getDate()).padStart(2, '0');
+    const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const year = dateObj.getFullYear();
+    
+    // For Hebrew locale, use dd/mm/yyyy
+    if (locale === 'he') {
+      return `${day}/${month}/${year}`;
+    }
+    
+    // For other locales, use mm/dd/yyyy
+    return `${month}/${day}/${year}`;
+  } catch (error) {
+    console.error('Error formatting date for display:', error);
     return '';
   }
 }

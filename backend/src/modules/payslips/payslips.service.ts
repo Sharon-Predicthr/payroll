@@ -215,7 +215,7 @@ export class PayslipsService extends BaseTenantService {
       const [year, month] = payslip.period_id.split('-').map(Number);
 
       // Get employee data
-      const employee = await this.getEmployeeDataFromPayslip(pool, payslip.employee_id, tenantCode);
+      const employee = await this.getEmployeeDataFromPayslip(pool, payslip.employee_id, tenantCode, payslip.period_id);
 
       // Check available columns in clc_payslip_lines
       const payslipLinesColsResult = await pool
@@ -880,7 +880,33 @@ export class PayslipsService extends BaseTenantService {
     pool: sql.ConnectionPool,
     employeeId: string,
     tenantCode: string,
+    periodId?: string,
   ): Promise<any> {
+    // Get job_pct from clc_payslips if periodId is provided
+    let jobPctFromPayslip: number | null = null;
+    if (periodId) {
+      try {
+        const payslipJobPctResult = await pool
+          .request()
+          .input('employeeId', sql.NVarChar, employeeId)
+          .input('clientId', sql.NVarChar, tenantCode)
+          .input('periodId', sql.NVarChar, periodId)
+          .query(`
+            SELECT TOP 1 job_pct 
+            FROM clc_payslips 
+            WHERE employee_id = @employeeId 
+              AND client_id = @clientId 
+              AND period_id = @periodId
+          `);
+        if (payslipJobPctResult.recordset.length > 0 && payslipJobPctResult.recordset[0].job_pct !== null) {
+          jobPctFromPayslip = parseFloat(payslipJobPctResult.recordset[0].job_pct); // job_pct is already in percentage format (e.g., 80.00 = 80%)
+        }
+      } catch (error) {
+        // If clc_payslips doesn't have job_pct or query fails, fall back to contract
+        this.logger.warn(`[getEmployeeDataFromPayslip] Could not get job_pct from clc_payslips, will use contract value`);
+      }
+    }
+    
     // Check which columns exist in each table
     const [employeesColumns, contractsColumns, departmentsColumns, bankDetailsColumns, banksColumns] = await Promise.all([
       pool.request().query(`SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'employees' AND TABLE_SCHEMA = SCHEMA_NAME()`),
@@ -1015,7 +1041,7 @@ export class PayslipsService extends BaseTenantService {
       address: address || '',
       employment_start_date: row.employment_start_date?.toISOString() || '',
       seniority_years: row.seniority_years || 0,
-      job_percentage: row.job_percentage || 100,
+      job_percentage: jobPctFromPayslip !== null ? jobPctFromPayslip : (row.job_percentage || 100),
       department: row.department || '',
       work_center: row.work_center || '',
       position: row.position || '',
