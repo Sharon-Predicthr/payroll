@@ -53,9 +53,9 @@ BEGIN
     IF (LEN(@tz9) < 8 OR LEN(@tz9) > 9 OR @tz9 NOT LIKE '[0-9]%')
     BEGIN SET @status_code = 12; SET @status_message = N'Invalid tz_id'; RETURN; END
     DECLARE @curr_period_id NVARCHAR(50), @period_start DATE, @period_end DATE;
-    SELECT TOP 1 @curr_period_id = period_id, @period_start = period_start_date, @period_end = period_end_date
-    FROM dbo.xlg_pay_periods WHERE client_id = @client_id AND GETDATE() BETWEEN period_start_date AND period_end_date AND is_closed = 0
-    ORDER BY period_start_date DESC;
+    SELECT TOP 1 @curr_period_id = period_id, @period_start = start_date, @period_end = end_date
+    FROM dbo.xlg_pay_periods WHERE client_id = @client_id AND @hire_date BETWEEN start_date AND end_date AND is_closed = 0
+    ORDER BY start_date DESC;
     IF (@curr_period_id IS NULL) BEGIN SET @status_code = 17; SET @status_message = N'No current open pay period'; RETURN; END
     IF (@hire_date < @period_start OR @hire_date > @period_end)
     BEGIN SET @status_code = 17; SET @status_message = N'hire_date not in current period'; RETURN; END
